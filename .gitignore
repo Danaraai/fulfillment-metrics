@@ -1,0 +1,19 @@
+# Credentials & secrets
+google_token.pickle
+google_oauth_credentials.json
+.streamlit/secrets.toml
+
+# Runtime data
+downloads/
+logs/
+session/
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# macOS
+.DS_Store

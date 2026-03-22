@@ -1,0 +1,19 @@
+{
+  "powerbi": {
+    "report_url": "https://app.powerbi.com/groups/me/reports/3b592822-1b96-4804-bdfe-d605ec85510a/ReportSection?ctid=6b46c388-daf7-48d4-b4a7-8d29fbedf7a1&experience=power-bi",
+    "visual_title": "Jack Archer",
+    "export_type": "Summarized data"
+  },
+  "google_sheets": {
+    "spreadsheet_id": "1tuo7knxTvOR3snd_u1AnnW1iiN9l1-TaOLi-YaVqLM0",
+    "tab_name": "Export",
+    "dedup_column": "OrderID",
+    "skip_header_if_data_exists": true,
+    "clear_tab_before_append": false
+  },
+  "schedule": {
+    "weekday": 7,
+    "hour": 8,
+    "minute": 0
+  }
+}
