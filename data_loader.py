@@ -244,6 +244,8 @@ def load_daily_metrics() -> pd.DataFrame:
     new_cols = list(df.columns)
     new_cols[0] = "Date"
     df.columns = new_cols
+    # Explicitly cast to datetime64 — iloc assignment via apply() returns object dtype
+    df["Date"] = pd.to_datetime(df["Date"])
 
     # Strip $ and parse all numeric/currency columns (skip Date and the
     # weekly-rollup "Week" column in position F which has date strings)
