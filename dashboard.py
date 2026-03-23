@@ -150,14 +150,14 @@ avg_labor_cost = mdf[labor_cost_col].dropna().mean() \
                  if not mdf.empty and labor_cost_col else None
 
 k1, k2, k3, k4 = st.columns(4)
+kpi_oplh_placeholder       = k3.empty()
+kpi_labor_cost_placeholder = k4.empty()
 k1.metric("Total Shipments", f"{total_orders:,}")
 k2.metric("Avg Shipping Cost / Order",
           f"${avg_ship_cost:.2f}" if pd.notna(avg_ship_cost) and avg_ship_cost != 0 else "—")
-k3.metric("Avg OPLH",
-          f"{avg_oplh:.1f}" if pd.notna(avg_oplh) else "—",
-          help="Orders Per Labor Hour (outbound)")
-k4.metric("Avg Labor Cost / Order",
-          f"${avg_labor_cost:.2f}" if pd.notna(avg_labor_cost) else "—")
+# OPLH + Labor Cost KPIs are filled in after the daily table is built below
+kpi_oplh_placeholder.metric("Avg OPLH", "—", help="Orders Per Labor Hour (outbound)")
+kpi_labor_cost_placeholder.metric("Avg Labor Cost / Order", "—")
 
 # ── Row 2: Carrier mix + Avg cost by carrier ─────────────────────────────────
 
@@ -299,74 +299,109 @@ if not mdf.empty and "OPLH" in mdf.columns:
     fig_oplh.update_traces(line_width=2, marker_size=5)
     st.plotly_chart(fig_oplh, use_container_width=True)
 
-# ── Row 6: Data table ─────────────────────────────────────────────────────────
-
-# ── Daily Metrics Table ───────────────────────────────────────────────────────
+# ── Daily Operations Metrics Table ───────────────────────────────────────────
+# Built by aggregating export rows per day, then joining with labor hours.
+# OPLH = Daily Orders / Outbound Labor Hours
+# Labor Cost/Order = (Total Labor Hours × $18.25/hr) / Daily Orders
 
 st.markdown('<div class="section-header">Daily Operations Metrics</div>', unsafe_allow_html=True)
 
-if not mdf.empty:
-    # Build a clean display table matching the sheet layout
-    display_df = mdf.copy()
-    display_df["Date"] = display_df["Date"].dt.strftime("%-m/%-d/%Y")
+LABOR_RATE = 18.25  # $/hr — matches your sheet
 
-    # Rename columns to friendly names
-    rename_map = {}
-    for col in display_df.columns:
-        cl = col.lower()
-        if "daily orders" in cl or "daily_orders" in cl:
-            rename_map[col] = "Daily Orders"
-        elif "outbound" in cl and "labor" not in cl and "cost" not in cl:
-            rename_map[col] = "Labor Hrs Outbound"
-        elif "total" in cl and "hours" in cl:
-            rename_map[col] = "Labor Hrs Total"
-        elif "labor cost per hour" in cl or "$/hr" in cl:
-            rename_map[col] = "Labor Cost/hr ($)"
-        elif "oplh" in cl:
-            rename_map[col] = "OPLH"
-        elif "total labor cost" in cl:
-            rename_map[col] = "Total Labor Cost/Order ($)"
-        elif "outbound labor cost" in cl or ("outbound" in cl and "cost" in cl):
-            rename_map[col] = "Outbound Labor Cost/Order ($)"
-        elif "packaging" in cl:
-            rename_map[col] = "Packaging Cost/Order ($)"
-        elif col == "Date":
-            pass  # keep as-is
-    display_df = display_df.rename(columns=rename_map)
+# Step 1: sum orders per day from filtered export data
+daily_orders = (
+    df.groupby(df["Transaction Date"].dt.normalize())
+      .agg(
+          Daily_Orders=("Transaction Date", "count"),
+          Avg_Ship_Cost=("Original Invoice", "mean"),
+      )
+      .reset_index()
+      .rename(columns={"Transaction Date": "Date"})
+)
 
-    # Pick ordered display columns
-    ordered = ["Date", "Daily Orders", "Labor Hrs Outbound", "Labor Hrs Total",
-               "Labor Cost/hr ($)", "OPLH",
-               "Total Labor Cost/Order ($)", "Outbound Labor Cost/Order ($)",
-               "Packaging Cost/Order ($)"]
-    show_cols = [c for c in ordered if c in display_df.columns]
+# Step 2: join with labor hours for the same date range
+if not ldf.empty:
+    labor_clean = ldf[["Date", "Outbound Hours", "Total Hours",
+                        "Emp Hours", "Temp Hours", "Headcount"]].copy()
+    labor_clean["Date"] = labor_clean["Date"].dt.normalize()
+    daily_tbl = daily_orders.merge(labor_clean, on="Date", how="left")
+else:
+    daily_tbl = daily_orders
+    for col in ["Outbound Hours", "Total Hours", "Emp Hours", "Temp Hours", "Headcount"]:
+        daily_tbl[col] = None
 
-    # Format numeric columns
-    format_map = {}
-    for c in show_cols:
-        if c in ("Daily Orders",):
-            format_map[c] = "{:,.0f}"
-        elif c in ("Labor Hrs Outbound", "Labor Hrs Total", "OPLH"):
-            format_map[c] = "{:.2f}"
-        elif "$" in c:
-            format_map[c] = "${:.2f}"
+# Step 3: compute OPLH and costs
+daily_tbl["OPLH"] = (
+    daily_tbl["Daily_Orders"] / daily_tbl["Outbound Hours"]
+).where(daily_tbl["Outbound Hours"].fillna(0) > 0)
 
-    st.dataframe(
-        display_df[show_cols]
-            .sort_values("Date", ascending=False)
-            .reset_index(drop=True)
-            .style.format(format_map, na_rep="—"),
-        use_container_width=True,
-        height=500,
-    )
+daily_tbl["Total Labor Cost/Order ($)"] = (
+    daily_tbl["Total Hours"] * LABOR_RATE / daily_tbl["Daily_Orders"]
+).where(daily_tbl["Daily_Orders"] > 0)
 
-    # Summary row below table
+daily_tbl["Outbound Labor Cost/Order ($)"] = (
+    daily_tbl["Outbound Hours"] * LABOR_RATE / daily_tbl["Daily_Orders"]
+).where(daily_tbl["Daily_Orders"] > 0)
+
+daily_tbl["Avg Shipping Cost/Order ($)"] = daily_tbl["Avg_Ship_Cost"]
+
+# Recalculate KPIs from computed table (overrides stale mdf values)
+avg_oplh       = daily_tbl["OPLH"].dropna().mean()
+avg_labor_cost = daily_tbl["Total Labor Cost/Order ($)"].dropna().mean()
+
+# Step 4: display
+show = daily_tbl.rename(columns={
+    "Daily_Orders":   "Daily Orders",
+    "Outbound Hours": "Labor Hrs Outbound",
+    "Total Hours":    "Labor Hrs Total",
+    "Emp Hours":      "Emp Hrs",
+    "Temp Hours":     "Temp Hrs",
+})[[
+    "Date", "Daily Orders",
+    "Labor Hrs Outbound", "Labor Hrs Total", "Emp Hrs", "Temp Hrs", "Headcount",
+    "OPLH",
+    "Total Labor Cost/Order ($)", "Outbound Labor Cost/Order ($)",
+    "Avg Shipping Cost/Order ($)",
+]].sort_values("Date", ascending=False).reset_index(drop=True)
+
+show["Date"] = show["Date"].dt.strftime("%-m/%-d/%Y")
+
+fmt = {
+    "Daily Orders":                "{:,.0f}",
+    "Labor Hrs Outbound":          "{:.2f}",
+    "Labor Hrs Total":             "{:.2f}",
+    "Emp Hrs":                     "{:.2f}",
+    "Temp Hrs":                    "{:.2f}",
+    "Headcount":                   "{:.0f}",
+    "OPLH":                        "{:.1f}",
+    "Total Labor Cost/Order ($)":  "${:.2f}",
+    "Outbound Labor Cost/Order ($)": "${:.2f}",
+    "Avg Shipping Cost/Order ($)": "${:.2f}",
+}
+
+st.dataframe(
+    show.style.format(fmt, na_rep="—"),
+    use_container_width=True,
+    height=500,
+)
+
+if pd.notna(avg_oplh) and pd.notna(avg_labor_cost):
     st.caption(
-        f"📊  Showing {len(display_df):,} days  ·  "
+        f"📊 {len(show):,} days shown  ·  "
         f"Avg OPLH: **{avg_oplh:.1f}** orders/hr  ·  "
-        f"Avg Labor Cost/Order: **${avg_labor_cost:.2f}**"
-        if pd.notna(avg_oplh) and pd.notna(avg_labor_cost) else
-        f"📊  Showing {len(display_df):,} days"
+        f"Avg Labor Cost/Order: **${avg_labor_cost:.2f}**  ·  "
+        f"Labor rate used: **${LABOR_RATE}/hr**"
     )
 else:
-    st.info("No data in Daily Metrics tab for the selected date range.")
+    st.caption(f"📊 {len(show):,} days  ·  Labor hours data not available for this range")
+
+# Back-fill KPI cards now that we have computed values
+kpi_oplh_placeholder.metric(
+    "Avg OPLH",
+    f"{avg_oplh:.1f}" if pd.notna(avg_oplh) else "—",
+    help="Orders Per Labor Hour (outbound)",
+)
+kpi_labor_cost_placeholder.metric(
+    "Avg Labor Cost / Order",
+    f"${avg_labor_cost:.2f}" if pd.notna(avg_labor_cost) else "—",
+)
