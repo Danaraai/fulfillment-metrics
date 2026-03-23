@@ -28,33 +28,55 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+  /* ── Global background ── */
+  .stApp { background-color: #f8f9fb; }
+
+  /* ── Sidebar ── */
+  [data-testid="stSidebar"] { background-color: #ffffff; border-right: 1px solid #e5e9f0; }
+
+  /* ── KPI cards ── */
   [data-testid="metric-container"] {
-    background: #1e2130;
-    border: 1px solid #2d3250;
-    border-radius: 10px;
-    padding: 16px 20px;
+    background: #ffffff;
+    border: 1px solid #e5e9f0;
+    border-radius: 12px;
+    padding: 20px 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
   }
-  [data-testid="metric-container"] label { color: #8a9bb5 !important; font-size: 13px; }
+  [data-testid="metric-container"] label {
+    color: #6b7a99 !important;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
   [data-testid="metric-container"] [data-testid="stMetricValue"] {
-    font-size: 28px; font-weight: 700; color: #ffffff;
+    font-size: 30px; font-weight: 700; color: #1a202c;
   }
+
+  /* ── Section headers ── */
   .section-header {
-    font-size: 16px; font-weight: 600; color: #c5d0e6;
-    margin: 24px 0 8px; padding-bottom: 6px;
-    border-bottom: 1px solid #2d3250;
+    font-size: 15px; font-weight: 700; color: #2d3748;
+    margin: 28px 0 10px; padding-bottom: 8px;
+    border-bottom: 2px solid #e5e9f0;
+    text-transform: uppercase; letter-spacing: 0.04em;
   }
-  .stSidebar { background: #151827; }
+
+  /* ── Dataframe ── */
+  [data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+
+  /* ── Title ── */
+  h1 { color: #1a202c !important; font-weight: 800 !important; }
 </style>
 """, unsafe_allow_html=True)
 
 PLOTLY_THEME = dict(
-    plot_bgcolor="#1e2130",
-    paper_bgcolor="#151827",
-    font_color="#c5d0e6",
-    xaxis=dict(gridcolor="#2d3250", linecolor="#2d3250"),
-    yaxis=dict(gridcolor="#2d3250", linecolor="#2d3250"),
+    plot_bgcolor="#ffffff",
+    paper_bgcolor="#f8f9fb",
+    font_color="#2d3748",
+    xaxis=dict(gridcolor="#e5e9f0", linecolor="#e5e9f0", showgrid=True),
+    yaxis=dict(gridcolor="#e5e9f0", linecolor="#e5e9f0", showgrid=True),
 )
-COLORS = ["#4c9aff", "#f56565", "#68d391", "#f6ad55", "#b794f4", "#76e4f7"]
+COLORS = ["#4361ee", "#f72585", "#4cc9f0", "#f8961e", "#7209b7", "#3a86ff"]
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 
@@ -272,7 +294,7 @@ if not mdf.empty and "Total Labor Cost Per Order" in mdf.columns:
 # ── Row 5: OPLH trend ─────────────────────────────────────────────────────────
 
 if not mdf.empty and "OPLH" in mdf.columns:
-    st.markdown('<div class="section-header">Orders Per Labor Hour (OPLH) — Weekly Trend</div>',
+    st.markdown('<div class="section-header">Orders Per Labor Hour (OPLH, Total Hours) — Weekly Trend</div>',
                 unsafe_allow_html=True)
 
     mdf["Week"] = (
@@ -362,9 +384,10 @@ else:
         daily_tbl[col] = float("nan")
 
 # Step 3: compute OPLH and costs
+# OPLH = Daily Orders ÷ Total Labor Hours (all labor, not just outbound)
 daily_tbl["OPLH"] = (
-    daily_tbl["Daily Orders"] / daily_tbl["Outbound Hours"]
-).where(daily_tbl["Outbound Hours"].fillna(0) > 0)
+    daily_tbl["Daily Orders"] / daily_tbl["Total Hours"]
+).where(daily_tbl["Total Hours"].fillna(0) > 0)
 
 daily_tbl["Total Labor Cost/Order ($)"] = (
     daily_tbl["Total Hours"] * LABOR_RATE / daily_tbl["Daily Orders"]
