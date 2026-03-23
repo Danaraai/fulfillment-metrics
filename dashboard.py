@@ -11,7 +11,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from data_loader import load_export, load_daily_metrics
 
@@ -86,7 +86,7 @@ default_start = max(min_date, datetime.now().date().replace(month=1, day=1))
 date_range = st.sidebar.date_input(
     "Date range",
     value=(default_start, max_date),
-    min_value=min_date,
+    min_value=date(2024, 1, 1),
     max_value=max_date,
 )
 
