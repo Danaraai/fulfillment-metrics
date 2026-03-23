@@ -301,7 +301,6 @@ fig_bar_vol.update_layout(
     **PLOTLY_THEME,
     xaxis_title="Week",
     yaxis_title="",
-    yaxis=dict(gridcolor="#e5e9f0", showgrid=True),
     margin=dict(t=30, b=10, l=10, r=10),
     height=380,
     uniformtext_minsize=10,
