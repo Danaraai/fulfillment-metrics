@@ -363,16 +363,16 @@ else:
 
 # Step 3: compute OPLH and costs
 daily_tbl["OPLH"] = (
-    daily_tbl["Daily_Orders"] / daily_tbl["Outbound Hours"]
+    daily_tbl["Daily Orders"] / daily_tbl["Outbound Hours"]
 ).where(daily_tbl["Outbound Hours"].fillna(0) > 0)
 
 daily_tbl["Total Labor Cost/Order ($)"] = (
-    daily_tbl["Total Hours"] * LABOR_RATE / daily_tbl["Daily_Orders"]
-).where(daily_tbl["Daily_Orders"] > 0)
+    daily_tbl["Total Hours"] * LABOR_RATE / daily_tbl["Daily Orders"]
+).where(daily_tbl["Daily Orders"] > 0)
 
 daily_tbl["Outbound Labor Cost/Order ($)"] = (
-    daily_tbl["Outbound Hours"] * LABOR_RATE / daily_tbl["Daily_Orders"]
-).where(daily_tbl["Daily_Orders"] > 0)
+    daily_tbl["Outbound Hours"] * LABOR_RATE / daily_tbl["Daily Orders"]
+).where(daily_tbl["Daily Orders"] > 0)
 
 daily_tbl["Avg Shipping Cost/Order ($)"] = daily_tbl["Avg_Ship_Cost"]
 
@@ -382,7 +382,6 @@ avg_labor_cost = daily_tbl["Total Labor Cost/Order ($)"].dropna().mean()
 
 # Step 4: display
 show = daily_tbl.rename(columns={
-    "Daily_Orders":   "Daily Orders",
     "Outbound Hours": "Labor Hrs Outbound",
     "Total Hours":    "Labor Hrs Total",
     "Emp Hours":      "Emp Hrs",
@@ -416,7 +415,7 @@ st.dataframe(
     height=500,
 )
 
-if pd.notna(avg_oplh) and pd.notna(avg_labor_cost):
+if pd.notna(avg_oplh) and avg_oplh > 0 and pd.notna(avg_labor_cost):
     st.caption(
         f"📊 {len(show):,} days shown  ·  "
         f"Avg OPLH: **{avg_oplh:.1f}** orders/hr  ·  "
