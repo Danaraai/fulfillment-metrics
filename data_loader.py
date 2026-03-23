@@ -185,9 +185,52 @@ def load_labor_hours() -> pd.DataFrame:
     return combined
 
 
-# Keep old name as alias so nothing breaks if referenced elsewhere
+@st.cache_data(ttl=3600, show_spinner="Loading daily metrics…")
 def load_daily_metrics() -> pd.DataFrame:
-    return load_labor_hours()
+    """
+    Load the pre-calculated Daily Metrics tab.
+    Columns: Week | Daily orders | Labor Hours Outbound | Labor hours total |
+             Labor cost per hour ($/hr) | Week | OPLH |
+             Total Labor Cost Per Order ($/order) |
+             Outbound Labor cost per order ($/order) |
+             Packaging cost per order | Month
+    """
+    creds = _get_creds()
+    svc   = _service(creds)
+    try:
+        result = svc.spreadsheets().values().get(
+            spreadsheetId=SHEET_ID,
+            range="Daily Metrics!A1:K"
+        ).execute()
+    except Exception:
+        return pd.DataFrame()
+
+    values = result.get("values", [])
+    if len(values) < 2:
+        return pd.DataFrame()
+
+    headers = values[0]
+    rows    = values[1:]
+    rows    = [r + [""] * (len(headers) - len(r)) for r in rows]
+    df      = pd.DataFrame(rows, columns=headers)
+
+    # Parse date column (column A = "Week" = daily date)
+    date_col = df.columns[0]
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce", infer_datetime_format=True)
+    df = df.dropna(subset=[date_col])
+    df = df.rename(columns={date_col: "Date"})
+
+    # Strip $ and parse all numeric/currency columns
+    for col in df.columns:
+        if col == "Date":
+            continue
+        df[col] = (
+            df[col].astype(str)
+                   .str.replace(r"[\$,]", "", regex=True)
+                   .pipe(pd.to_numeric, errors="coerce")
+        )
+
+    return df
 
 
 @st.cache_data(ttl=3600)
