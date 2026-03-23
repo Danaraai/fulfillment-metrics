@@ -57,39 +57,73 @@ def _service(creds):
 
 # ── Sheet readers ─────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=3600, show_spinner="Loading shipping data…")
-def load_export() -> pd.DataFrame:
-    """Load the Export tab (Power BI shipping data)."""
-    creds = _get_creds()
-    svc   = _service(creds)
-    result = svc.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID,
-        range="Export!A1:Z"
-    ).execute()
+def _read_tab(svc, tab_name: str) -> pd.DataFrame:
+    """Read any tab into a DataFrame, parsing dates and numerics."""
+    try:
+        result = svc.spreadsheets().values().get(
+            spreadsheetId=SHEET_ID,
+            range=f"{tab_name}!A1:AO"   # wide enough for all columns
+        ).execute()
+    except Exception:
+        return pd.DataFrame()
+
     values = result.get("values", [])
     if not values:
         return pd.DataFrame()
 
     headers = values[0]
     rows    = values[1:]
-    # Pad short rows
-    rows = [r + [""] * (len(headers) - len(r)) for r in rows]
-    df   = pd.DataFrame(rows, columns=headers)
+    rows    = [r + [""] * (len(headers) - len(r)) for r in rows]
+    df      = pd.DataFrame(rows, columns=headers)
 
-    # Parse date
-    df["Transaction Date"] = pd.to_datetime(
-        df["Transaction Date"], errors="coerce", infer_datetime_format=True
-    )
+    # Parse Transaction Date
+    if "Transaction Date" in df.columns:
+        df["Transaction Date"] = pd.to_datetime(
+            df["Transaction Date"], errors="coerce", infer_datetime_format=True
+        )
+        df = df.dropna(subset=["Transaction Date"])
+
     # Parse numeric cost columns
     for col in ["Original Invoice", "Fulfillment without Surcharge",
                 "Surcharge Applied", "WMS Fuel Surcharge",
                 "Delivery Area Surcharge", "Residential Area Surcharge",
-                "Address Correction Fee", "Other Order Fee"]:
+                "Address Correction Fee", "Other Order Fee", "Insurance Amount",
+                "Actual Weight (Oz)", "Dim Weight(Oz)", "Billable Weight(Oz)",
+                "Transit Time (Days)", "Length", "Width", "Height"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    df = df.dropna(subset=["Transaction Date"])
     return df
+
+
+@st.cache_data(ttl=3600, show_spinner="Loading shipping data…")
+def load_export() -> pd.DataFrame:
+    """Load Export + Old Shipments tabs, concatenated and deduplicated."""
+    creds = _get_creds()
+    svc   = _service(creds)
+
+    new_df = _read_tab(svc, "Export")
+    old_df = _read_tab(svc, "Old Shipments")
+
+    if old_df.empty and new_df.empty:
+        return pd.DataFrame()
+    if old_df.empty:
+        return new_df
+    if new_df.empty:
+        return old_df
+
+    combined = pd.concat([old_df, new_df], ignore_index=True)
+
+    # Deduplicate on OrderID + Transaction Date (keep last = newest export wins)
+    if "OrderID" in combined.columns and "Transaction Date" in combined.columns:
+        combined = (
+            combined
+            .sort_values("Transaction Date")
+            .drop_duplicates(subset=["OrderID"], keep="last")
+            .reset_index(drop=True)
+        )
+
+    return combined
 
 
 @st.cache_data(ttl=3600, show_spinner="Loading labor hours…")
