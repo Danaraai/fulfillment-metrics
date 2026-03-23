@@ -308,25 +308,27 @@ st.markdown('<div class="section-header">Daily Operations Metrics</div>', unsafe
 
 LABOR_RATE = 18.25  # $/hr — matches your sheet
 
-# Step 1: sum orders per day from filtered export data
-daily_orders = (
-    df.groupby(df["Transaction Date"].dt.normalize())
-      .agg(
-          Daily_Orders=("Transaction Date", "count"),
-          Avg_Ship_Cost=("Original Invoice", "mean"),
-      )
-      .reset_index()
-      .rename(columns={"Transaction Date": "Date"})
+# Step 1: count orders per calendar day (one row per day, proper sum)
+df["_day"] = df["Transaction Date"].dt.floor("D")
+cnt  = df.groupby("_day").size().rename("Daily Orders")
+cost = (
+    df.groupby("_day")["Original Invoice"].mean().rename("Avg_Ship_Cost")
+    if "Original Invoice" in df.columns else pd.Series(dtype=float, name="Avg_Ship_Cost")
 )
+daily_orders = pd.concat([cnt, cost], axis=1).reset_index().rename(columns={"_day": "Date"})
+df.drop(columns=["_day"], inplace=True)   # clean up helper column
 
-# Step 2: join with labor hours for the same date range
+# Step 2: join with labor hours — deduplicate labor by date first to prevent row explosion
 if not ldf.empty:
-    labor_clean = ldf[["Date", "Outbound Hours", "Total Hours",
-                        "Emp Hours", "Temp Hours", "Headcount"]].copy()
-    labor_clean["Date"] = labor_clean["Date"].dt.normalize()
+    labor_clean = (
+        ldf[["Date", "Outbound Hours", "Total Hours", "Emp Hours", "Temp Hours", "Headcount"]]
+        .copy()
+        .assign(Date=ldf["Date"].dt.floor("D"))
+        .drop_duplicates(subset=["Date"], keep="last")   # guard against duplicate days
+    )
     daily_tbl = daily_orders.merge(labor_clean, on="Date", how="left")
 else:
-    daily_tbl = daily_orders
+    daily_tbl = daily_orders.copy()
     for col in ["Outbound Hours", "Total Hours", "Emp Hours", "Temp Hours", "Headcount"]:
         daily_tbl[col] = None
 
