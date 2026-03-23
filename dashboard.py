@@ -210,7 +210,12 @@ if "Carrier" in df.columns:
 
 st.markdown('<div class="section-header">Weekly Volume</div>', unsafe_allow_html=True)
 
-df["Week"] = df["Transaction Date"].dt.to_period("W-SAT").apply(lambda r: r.start_time)
+# Use Monday-anchored week start; normalize() strips the sub-second precision
+# bug that .start_time produces when using Period("W-SAT")
+df["Week"] = (
+    df["Transaction Date"]
+    - pd.to_timedelta(df["Transaction Date"].dt.dayofweek, unit="D")
+).dt.normalize()
 weekly_orders = df.groupby("Week").size().reset_index(name="Shipments")
 
 fig_vol = px.line(
@@ -227,7 +232,9 @@ if not mdf.empty and "Total Labor Cost Per Order" in mdf.columns:
     st.markdown('<div class="section-header">Cost Per Order Breakdown (Weekly)</div>',
                 unsafe_allow_html=True)
 
-    mdf["Week"] = mdf["Date"].dt.to_period("W-SAT").apply(lambda r: r.start_time)
+    mdf["Week"] = (
+        mdf["Date"] - pd.to_timedelta(mdf["Date"].dt.dayofweek, unit="D")
+    ).dt.normalize()
     weekly_costs = mdf.groupby("Week").agg(
         Shipping=("Total Labor Cost Per Order", "mean"),  # placeholder until shipping cost is per-order
         Labor=("Total Labor Cost Per Order", "mean"),
@@ -268,7 +275,9 @@ if not mdf.empty and "OPLH" in mdf.columns:
     st.markdown('<div class="section-header">Orders Per Labor Hour (OPLH) — Weekly Trend</div>',
                 unsafe_allow_html=True)
 
-    mdf["Week"] = mdf["Date"].dt.to_period("W-SAT").apply(lambda r: r.start_time)
+    mdf["Week"] = (
+        mdf["Date"] - pd.to_timedelta(mdf["Date"].dt.dayofweek, unit="D")
+    ).dt.normalize()
     oplh_weekly = (
         mdf.dropna(subset=["OPLH"])
            .groupby("Week")["OPLH"]

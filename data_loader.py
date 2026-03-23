@@ -214,9 +214,27 @@ def load_daily_metrics() -> pd.DataFrame:
     rows    = [r + [""] * (len(headers) - len(r)) for r in rows]
     df      = pd.DataFrame(rows, columns=headers)
 
-    # Parse date column (column A = "Week" = daily date)
+    # Parse date column (column A = "Week" = daily date).
+    # Google Sheets API may return either "2/20/2026" (formatted) or a serial
+    # number like "46432" (days since 1899-12-30).  Handle both.
     date_col = df.columns[0]
-    df[date_col] = pd.to_datetime(df[date_col], errors="coerce", infer_datetime_format=True)
+
+    def _parse_date_cell(v):
+        s = str(v).strip()
+        if not s or s.lower() in ("nan", "none", ""):
+            return pd.NaT
+        # Try standard datetime parsing first
+        parsed = pd.to_datetime(s, errors="coerce", infer_datetime_format=True)
+        if pd.notna(parsed):
+            return parsed
+        # Fallback: Google Sheets serial number (days since 1899-12-30)
+        try:
+            serial = float(s)
+            return pd.Timestamp("1899-12-30") + pd.to_timedelta(serial, unit="D")
+        except (ValueError, TypeError):
+            return pd.NaT
+
+    df[date_col] = df[date_col].apply(_parse_date_cell)
     df = df.dropna(subset=[date_col])
     df = df.rename(columns={date_col: "Date"})
 
