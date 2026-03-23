@@ -142,7 +142,7 @@ avg_pkg_cost = (
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Total Shipments", f"{total_orders:,}")
-k2.metric("Avg Shipping Cost / Order", f"${avg_ship_cost:.2f}" if avg_ship_cost and avg_ship_cost == avg_ship_cost else "—")
+k2.metric("Avg Shipping Cost / Order", f"${avg_ship_cost:.2f}" if pd.notna(avg_ship_cost) and avg_ship_cost != 0 else "—")
 k3.metric("Avg OPLH", f"{avg_oplh:.1f}" if avg_oplh and avg_oplh == avg_oplh else "—",
           help="Orders Per Labor Hour (outbound)")
 k4.metric("Avg Labor Cost / Order", f"${avg_labor_cost:.2f}" if avg_labor_cost and avg_labor_cost == avg_labor_cost else "—")

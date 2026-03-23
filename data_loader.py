@@ -91,7 +91,13 @@ def _read_tab(svc, tab_name: str) -> pd.DataFrame:
                 "Actual Weight (Oz)", "Dim Weight(Oz)", "Billable Weight(Oz)",
                 "Transit Time (Days)", "Length", "Width", "Height"]:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            # Strip currency symbols / commas before parsing (handles "$5.43" or "1,234.56")
+            df[col] = (
+                df[col].astype(str)
+                       .str.replace(r"[\$,]", "", regex=True)
+                       .pipe(pd.to_numeric, errors="coerce")
+                       .fillna(0)
+            )
 
     return df
 
