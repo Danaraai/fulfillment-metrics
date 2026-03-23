@@ -1,11 +1,11 @@
 """
-run_now.py — Jack Archer weekly Power BI → Google Sheets export.
+run_now.py — Jack Archer daily Power BI → Google Sheets export.
 
 HOW IT WORKS:
-  1. Calculates the correct Friday→Thursday date range for the week just ended
+  1. Calculates yesterday's date
   2. Opens the Power BI report in your real Chrome browser
-  3. Shows you exactly which dates to set in the date slicer
-  4. Waits (up to 10 min) for you to export the CSV
+  3. Sets the date slicer to yesterday (start AND end)
+  4. Waits (up to 10 min) for the CSV to download
   5. Deduplicates against rows already in the sheet (by Order ID)
   6. Appends only NEW rows to the Export tab
 
@@ -13,7 +13,7 @@ USAGE:
   python3 run_now.py                  # Run the full export
   python3 run_now.py --dry-run        # Preview without writing to Sheets
   python3 run_now.py --upload-only    # Skip Chrome, re-upload most recent ~/Downloads/data.csv
-  python3 run_now.py --schedule       # Install macOS weekly Saturday 8am job
+  python3 run_now.py --schedule       # Install macOS daily 4pm job
   python3 run_now.py --unschedule     # Remove the schedule
 """
 
@@ -49,33 +49,15 @@ def load_config() -> dict:
 
 
 # ── Date helpers ──────────────────────────────────────────────────────────────
-def get_week_range(ref: date = None) -> tuple:
-    """
-    Returns (week_start, week_end) for the most recently completed Fri→Fri week.
-
-    Logic (run on Saturday):
-      - last Friday  = yesterday               (end of the week)
-      - week_start   = last Friday minus 7     (the Friday it started)
-      - week_end     = last Friday             (inclusive)
-
-    Example — Saturday 2026-03-21:
-      last_friday = 2026-03-20
-      week_start  = 2026-03-13
-      week_end    = 2026-03-20
-    """
+def get_yesterday(ref: date = None) -> date:
+    """Returns yesterday's date (the day to export)."""
     if ref is None:
         ref = date.today()
-    # Find the most recent Friday on or before ref
-    days_since_fri = (ref.weekday() - 4) % 7   # Mon=0…Fri=4…Sat=5
-    last_friday    = ref - timedelta(days=days_since_fri)
-    week_end       = last_friday                # Friday (inclusive)
-    week_start     = last_friday - timedelta(days=7)   # Friday 7 days earlier
-    return week_start, week_end
+    return ref - timedelta(days=1)
 
 
-def fmt(d: date) -> str:       return d.strftime("%B %d, %Y")    # March 13, 2026
-def fmt_s(d: date) -> str:     return d.strftime("%Y-%m-%d")     # 2026-03-13
-def week_label(ws, we) -> str: return f"{fmt_s(ws)} → {fmt_s(we)}"
+def fmt(d: date) -> str:   return d.strftime("%B %d, %Y")    # March 22, 2026
+def fmt_s(d: date) -> str: return d.strftime("%Y-%m-%d")     # 2026-03-22
 
 
 # ── Chrome automation (AppleScript + JS injection — no Playwright needed) ─────
@@ -108,14 +90,14 @@ def open_chrome(url: str):
     subprocess.run(["osascript", "-e", script])
 
 
-def automate_chrome_export(report_url: str, week_end: date) -> bool:
+def automate_chrome_export(report_url: str, export_date: date) -> bool:
     """
     Fully automated Chrome export via AppleScript + JS injection.
-    Steps: open report → set date → click ··· → Export data → Summarized → CSV → Export.
+    Steps: open report → set date slicer to export_date (start AND end) → click ··· → Export.
     Returns True if export was triggered successfully.
     """
-    end_str = week_end.strftime("%-m/%-d/%Y")   # e.g. "3/20/2026"
-    day_num = str(week_end.day)                  # e.g. "20"
+    date_str = export_date.strftime("%-m/%-d/%Y")   # e.g. "3/22/2026"
+    day_num  = str(export_date.day)                  # e.g. "22"
 
     # 1 — Open Chrome
     print("  Opening Chrome and loading report...")
@@ -134,22 +116,24 @@ def automate_chrome_export(report_url: str, week_end: date) -> bool:
 
     time.sleep(2)
 
-    # 3 — Set the end date on the Transaction Date slicer
-    print(f"  Setting date range end → {end_str}...")
+    # 3 — Set BOTH start and end date inputs to export_date (single day)
+    print(f"  Setting date slicer to {date_str} (start and end)...")
     set_result = _run_js(f"""
 (function() {{
     var inputs = Array.from(document.querySelectorAll('input'))
                       .filter(function(i) {{ return /\\d+\\/\\d+\\/\\d+/.test(i.value); }});
     if (inputs.length < 2) {{ return 'error: only ' + inputs.length + ' date inputs found'; }}
-    var endInput = inputs[inputs.length - 1];
-    endInput.focus();
-    endInput.select();
-    document.execCommand('selectAll');
-    document.execCommand('insertText', false, '{end_str}');
-    endInput.dispatchEvent(new KeyboardEvent('keydown',  {{bubbles:true, cancelable:true, key:'Enter', keyCode:13}}));
-    endInput.dispatchEvent(new KeyboardEvent('keypress', {{bubbles:true, cancelable:true, key:'Enter', keyCode:13}}));
-    endInput.dispatchEvent(new KeyboardEvent('keyup',    {{bubbles:true, cancelable:true, key:'Enter', keyCode:13}}));
-    return 'set end to {end_str}';
+    function setInput(el, val) {{
+        el.focus(); el.select();
+        document.execCommand('selectAll');
+        document.execCommand('insertText', false, val);
+        el.dispatchEvent(new KeyboardEvent('keydown',  {{bubbles:true, cancelable:true, key:'Enter', keyCode:13}}));
+        el.dispatchEvent(new KeyboardEvent('keypress', {{bubbles:true, cancelable:true, key:'Enter', keyCode:13}}));
+        el.dispatchEvent(new KeyboardEvent('keyup',    {{bubbles:true, cancelable:true, key:'Enter', keyCode:13}}));
+    }}
+    setInput(inputs[0], '{date_str}');
+    setInput(inputs[inputs.length - 1], '{date_str}');
+    return 'set start+end to {date_str}';
 }})()
 """)
     print(f"  Date JS: {set_result}")
@@ -269,9 +253,9 @@ def wait_for_csv(timeout_minutes: int = 10):
     return None
 
 
-def archive_csv(src: Path, ws: date, we: date) -> Path:
+def archive_csv(src: Path, export_date: date) -> Path:
     ARCHIVE_DIR.mkdir(exist_ok=True)
-    dest = ARCHIVE_DIR / f"jack_archer_{fmt_s(ws)}_to_{fmt_s(we)}.csv"
+    dest = ARCHIVE_DIR / f"jack_archer_{fmt_s(export_date)}.csv"
     shutil.copy2(src, dest)
     return dest
 
@@ -316,10 +300,10 @@ def get_google_creds(config: dict):
     return creds
 
 
-def upload_to_sheets(csv_path: Path, config: dict, ws: date, we: date, dry_run=False) -> int:
+def upload_to_sheets(csv_path: Path, config: dict, export_date: date, dry_run=False) -> int:
     """
     Append new rows to the sheet, deduplicating by Order ID.
-    Prepends a 'Week' column (e.g. '2026-03-13 → 2026-03-19').
+    Prepends a 'Week' column with the export date (e.g. '2026-03-22').
     Returns number of NEW rows appended.
     """
     import pandas as pd
@@ -328,7 +312,7 @@ def upload_to_sheets(csv_path: Path, config: dict, ws: date, we: date, dry_run=F
     sheet_id  = config["google_sheets"]["spreadsheet_id"]
     tab       = config["google_sheets"]["tab_name"]
     dedup_col = config["google_sheets"].get("dedup_column", "Order ID")
-    wlabel    = week_label(ws, we)
+    wlabel    = fmt_s(export_date)
 
     # Read CSV
     df = pd.read_csv(csv_path, encoding="utf-8-sig")
@@ -415,10 +399,10 @@ def upload_to_sheets(csv_path: Path, config: dict, ws: date, we: date, dry_run=F
 # ── Scheduling ────────────────────────────────────────────────────────────────
 def install_schedule(config: dict):
     LOG_DIR.mkdir(exist_ok=True)
-    weekday = config.get("schedule", {}).get("weekday", 7)   # 7 = Saturday
-    hour    = config.get("schedule", {}).get("hour", 8)
-    minute  = config.get("schedule", {}).get("minute", 0)
+    hour   = config.get("schedule", {}).get("hour", 16)
+    minute = config.get("schedule", {}).get("minute", 0)
 
+    # No <Weekday> key → launchd fires every day at this time
     plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -432,7 +416,6 @@ def install_schedule(config: dict):
     </array>
     <key>StartCalendarInterval</key>
     <dict>
-        <key>Weekday</key><integer>{weekday}</integer>
         <key>Hour</key><integer>{hour}</integer>
         <key>Minute</key><integer>{minute}</integer>
     </dict>
@@ -447,9 +430,7 @@ def install_schedule(config: dict):
     PLIST_PATH.write_text(plist)
     subprocess.run(["launchctl", "load", str(PLIST_PATH)], capture_output=True)
 
-    days = {1:"Sunday", 2:"Monday", 3:"Tuesday", 4:"Wednesday",
-            5:"Thursday", 6:"Friday", 7:"Saturday"}
-    print(f"✓ Scheduled every {days.get(weekday, 'Saturday')} at {hour:02d}:{minute:02d}")
+    print(f"✓ Scheduled daily at {hour:02d}:{minute:02d} (every day)")
     print(f"  Logs → {LOG_DIR}/export.log")
 
 
@@ -464,10 +445,10 @@ def uninstall_schedule():
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="Jack Archer weekly Power BI → Sheets export")
+    parser = argparse.ArgumentParser(description="Jack Archer daily Power BI → Sheets export")
     parser.add_argument("--dry-run",     action="store_true", help="Preview upload without writing")
     parser.add_argument("--upload-only", action="store_true", help="Skip Chrome, use latest ~/Downloads/data.csv")
-    parser.add_argument("--schedule",    action="store_true", help="Install Saturday 8am launchd job")
+    parser.add_argument("--schedule",    action="store_true", help="Install daily 4pm launchd job")
     parser.add_argument("--unschedule",  action="store_true", help="Remove the scheduled job")
     args = parser.parse_args()
 
@@ -481,12 +462,12 @@ def main():
         install_schedule(config)
         return
 
-    ws, we = get_week_range()
+    export_date = get_yesterday()
 
     print("=" * 62)
-    print("  Jack Archer Weekly Export")
-    print(f"  Week   : {fmt(ws)}  →  {fmt(we)}")
-    print(f"  Today  : {fmt(date.today())}")
+    print("  Jack Archer Daily Export")
+    print(f"  Exporting : {fmt(export_date)}  (yesterday)")
+    print(f"  Today     : {fmt(date.today())}")
     print("=" * 62)
 
     # ── Step 1: Get the CSV ────────────────────────────────────────────────────
@@ -498,8 +479,8 @@ def main():
         csv_path = candidates[0]
         print(f"\nUsing: {csv_path.name}  ({csv_path.stat().st_size // 1024} KB)")
     else:
-        print(f"\n[1/3] Automating Chrome export ({fmt_s(ws)} → {fmt_s(we)})...")
-        automate_chrome_export(config["powerbi"]["report_url"], we)
+        print(f"\n[1/3] Automating Chrome export for {fmt_s(export_date)}...")
+        automate_chrome_export(config["powerbi"]["report_url"], export_date)
         csv_path = wait_for_csv(timeout_minutes=10)
         if csv_path is None:
             print("\nExport not detected. Try running with --upload-only after exporting manually.")
@@ -507,12 +488,12 @@ def main():
 
     # ── Step 2: Archive ───────────────────────────────────────────────────────
     print("\n[2/3] Archiving CSV …")
-    archived = archive_csv(csv_path, ws, we)
+    archived = archive_csv(csv_path, export_date)
     print(f"  Saved → downloads/{archived.name}")
 
     # ── Step 3: Upload with dedup ─────────────────────────────────────────────
     print("\n[3/3] Uploading to Google Sheets …")
-    new_rows = upload_to_sheets(archived, config, ws, we, dry_run=args.dry_run)
+    new_rows = upload_to_sheets(archived, config, export_date, dry_run=args.dry_run)
 
     tag = "[DRY RUN] " if args.dry_run else ""
     print(f"\n{tag}✓ Done — {new_rows:,} new rows added.")

@@ -12,8 +12,7 @@
     "clear_tab_before_append": false
   },
   "schedule": {
-    "weekday": 7,
-    "hour": 8,
+    "hour": 16,
     "minute": 0
   }
 }
