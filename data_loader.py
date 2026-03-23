@@ -161,9 +161,12 @@ def load_labor_hours() -> pd.DataFrame:
         rows    = [r + [""] * (len(headers) - len(r)) for r in rows]
         frame   = pd.DataFrame(rows, columns=headers)
 
-        frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce",
-                                       infer_datetime_format=True)
-        frame = frame.dropna(subset=["Date"])
+        # Column A is always the date regardless of its header name ("Week", "Date", etc.)
+        date_col = frame.columns[0]
+        frame[date_col] = pd.to_datetime(frame[date_col], errors="coerce",
+                                         infer_datetime_format=True)
+        frame = frame.dropna(subset=[date_col])
+        frame = frame.rename(columns={date_col: "Date"})
 
         for col in ["Total Hours", "Emp Hours", "Temp Hours",
                     "Outbound Hours", "Inbound Hours", "Headcount"]:
@@ -234,13 +237,18 @@ def load_daily_metrics() -> pd.DataFrame:
         except (ValueError, TypeError):
             return pd.NaT
 
-    df[date_col] = df[date_col].apply(_parse_date_cell)
-    df = df.dropna(subset=[date_col])
-    df = df.rename(columns={date_col: "Date"})
+    # Rename column A to "Date" by position (not by name) to avoid renaming
+    # column F which is also called "Week" in the Daily Metrics tab.
+    df.iloc[:, 0] = df.iloc[:, 0].apply(_parse_date_cell)
+    df = df[df.iloc[:, 0].notna()].copy()
+    new_cols = list(df.columns)
+    new_cols[0] = "Date"
+    df.columns = new_cols
 
-    # Strip $ and parse all numeric/currency columns
-    for col in df.columns:
-        if col == "Date":
+    # Strip $ and parse all numeric/currency columns (skip Date and the
+    # weekly-rollup "Week" column in position F which has date strings)
+    for i, col in enumerate(df.columns):
+        if i == 0:   # Date column — already parsed
             continue
         df[col] = (
             df[col].astype(str)
