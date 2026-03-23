@@ -308,29 +308,58 @@ st.markdown('<div class="section-header">Daily Operations Metrics</div>', unsafe
 
 LABOR_RATE = 18.25  # $/hr — matches your sheet
 
-# Step 1: count orders per calendar day (one row per day, proper sum)
-df["_day"] = df["Transaction Date"].dt.floor("D")
-cnt  = df.groupby("_day").size().rename("Daily Orders")
-cost = (
-    df.groupby("_day")["Original Invoice"].mean().rename("Avg_Ship_Cost")
-    if "Original Invoice" in df.columns else pd.Series(dtype=float, name="Avg_Ship_Cost")
+# ── DEBUG (remove after confirming) ──────────────────────────────────────────
+with st.expander("🔍 Debug info (click to expand)", expanded=False):
+    st.write(f"**export_df rows:** {len(export_df):,} | **df (filtered) rows:** {len(df):,}")
+    st.write(f"**Transaction Date dtype:** `{df['Transaction Date'].dtype}`")
+    st.write(f"**Unique dates in df:** {df['Transaction Date'].dt.date.nunique()}")
+    st.write(f"**labor_df rows:** {len(labor_df):,} | **ldf rows:** {len(ldf):,}")
+    if not ldf.empty:
+        st.write(f"**Labor Date dtype:** `{ldf['Date'].dtype}`")
+        st.write(f"**Labor unique dates:** {ldf['Date'].dt.date.nunique()}")
+    st.write("**First 5 Transaction Dates:**", df["Transaction Date"].head().tolist())
+    # Quick groupby test
+    test = df["Transaction Date"].dt.date.value_counts().sort_index()
+    st.write(f"**Groupby test — unique days:** {len(test)}, **top 5:**", test.tail().to_dict())
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Step 1: count orders per calendar day using value_counts (most reliable)
+day_counts = (
+    df["Transaction Date"].dt.date
+      .value_counts()
+      .sort_index()
+      .reset_index()
 )
-daily_orders = pd.concat([cnt, cost], axis=1).reset_index().rename(columns={"_day": "Date"})
-df.drop(columns=["_day"], inplace=True)   # clean up helper column
+day_counts.columns = ["Date", "Daily Orders"]
+day_counts["Date"] = pd.to_datetime(day_counts["Date"])
+
+if "Original Invoice" in df.columns:
+    avg_cost = (
+        df.assign(_day=df["Transaction Date"].dt.date)
+          .groupby("_day")["Original Invoice"]
+          .mean()
+          .reset_index()
+          .rename(columns={"_day": "Date", "Original Invoice": "Avg_Ship_Cost"})
+    )
+    avg_cost["Date"] = pd.to_datetime(avg_cost["Date"])
+    daily_orders = day_counts.merge(avg_cost, on="Date", how="left")
+else:
+    daily_orders = day_counts.copy()
+    daily_orders["Avg_Ship_Cost"] = float("nan")
 
 # Step 2: join with labor hours — deduplicate labor by date first to prevent row explosion
 if not ldf.empty:
     labor_clean = (
         ldf[["Date", "Outbound Hours", "Total Hours", "Emp Hours", "Temp Hours", "Headcount"]]
         .copy()
-        .assign(Date=ldf["Date"].dt.floor("D"))
-        .drop_duplicates(subset=["Date"], keep="last")   # guard against duplicate days
+        .assign(Date=pd.to_datetime(ldf["Date"].dt.date))
+        .drop_duplicates(subset=["Date"], keep="last")
     )
     daily_tbl = daily_orders.merge(labor_clean, on="Date", how="left")
 else:
     daily_tbl = daily_orders.copy()
     for col in ["Outbound Hours", "Total Hours", "Emp Hours", "Temp Hours", "Headcount"]:
-        daily_tbl[col] = None
+        daily_tbl[col] = float("nan")
 
 # Step 3: compute OPLH and costs
 daily_tbl["OPLH"] = (
