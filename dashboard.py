@@ -80,7 +80,8 @@ st.sidebar.markdown("---")
 min_date = export_df["Transaction Date"].min().date()
 max_date = export_df["Transaction Date"].max().date()
 
-default_start = max(min_date, (datetime.now() - timedelta(days=90)).date())
+# Default: show full current year (or all data if older)
+default_start = max(min_date, datetime.now().date().replace(month=1, day=1))
 
 date_range = st.sidebar.date_input(
     "Date range",
@@ -141,10 +142,10 @@ avg_pkg_cost = (
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Total Shipments", f"{total_orders:,}")
-k2.metric("Avg Shipping Cost / Order", f"${avg_ship_cost:.2f}" if avg_ship_cost else "—")
-k3.metric("Avg OPLH", f"{avg_oplh:.1f}" if avg_oplh else "—",
+k2.metric("Avg Shipping Cost / Order", f"${avg_ship_cost:.2f}" if avg_ship_cost and avg_ship_cost == avg_ship_cost else "—")
+k3.metric("Avg OPLH", f"{avg_oplh:.1f}" if avg_oplh and avg_oplh == avg_oplh else "—",
           help="Orders Per Labor Hour (outbound)")
-k4.metric("Avg Labor Cost / Order", f"${avg_labor_cost:.2f}" if avg_labor_cost else "—")
+k4.metric("Avg Labor Cost / Order", f"${avg_labor_cost:.2f}" if avg_labor_cost and avg_labor_cost == avg_labor_cost else "—")
 
 # ── Row 2: Carrier mix + Avg cost by carrier ─────────────────────────────────
 
