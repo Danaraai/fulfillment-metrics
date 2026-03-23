@@ -133,41 +133,64 @@ def load_export() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner="Loading labor hours…")
-def load_daily_metrics() -> pd.DataFrame:
-    """Load the Daily Metrics tab (formula-driven KPIs)."""
+def load_labor_hours() -> pd.DataFrame:
+    """
+    Load labor hours from 'Labor Hours 2025' and 'Labor Hours 2026' tabs.
+    Columns: Date | Total Hours | Emp Hours | Temp Hours |
+             Outbound Hours | Inbound Hours | Headcount
+    """
     creds = _get_creds()
     svc   = _service(creds)
-    try:
-        result = svc.spreadsheets().values().get(
-            spreadsheetId=SHEET_ID,
-            range="Daily Metrics!A1:K"
-        ).execute()
-    except Exception:
-        return pd.DataFrame()  # Tab doesn't exist yet — graceful fallback
 
-    values = result.get("values", [])
-    if len(values) < 2:
+    frames = []
+    for tab in ("Labor Hours 2025", "Labor Hours 2026"):
+        try:
+            result = svc.spreadsheets().values().get(
+                spreadsheetId=SHEET_ID,
+                range=f"{tab}!A1:G"
+            ).execute()
+        except Exception:
+            continue
+
+        values = result.get("values", [])
+        if len(values) < 2:
+            continue
+
+        headers = values[0]
+        rows    = values[1:]
+        rows    = [r + [""] * (len(headers) - len(r)) for r in rows]
+        frame   = pd.DataFrame(rows, columns=headers)
+
+        frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce",
+                                       infer_datetime_format=True)
+        frame = frame.dropna(subset=["Date"])
+
+        for col in ["Total Hours", "Emp Hours", "Temp Hours",
+                    "Outbound Hours", "Inbound Hours", "Headcount"]:
+            if col in frame.columns:
+                frame[col] = pd.to_numeric(frame[col], errors="coerce").fillna(0)
+
+        frames.append(frame)
+
+    if not frames:
         return pd.DataFrame()
 
-    headers = values[0]
-    rows    = values[1:]
-    rows    = [r + [""] * (len(headers) - len(r)) for r in rows]
-    df      = pd.DataFrame(rows, columns=headers)
+    combined = pd.concat(frames, ignore_index=True)
+    combined = (
+        combined
+        .sort_values("Date")
+        .drop_duplicates(subset=["Date"], keep="last")
+        .reset_index(drop=True)
+    )
+    return combined
 
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", infer_datetime_format=True)
-    df = df.dropna(subset=["Date"])
 
-    numeric_cols = ["Daily Orders", "Labor Hours Outbound", "Labor Hours Total",
-                    "Labor Cost/hr", "OPLH", "Total Labor Cost Per Order",
-                    "Outbound Labor Cost Per Order", "Packaging Cost Per Order"]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    return df
+# Keep old name as alias so nothing breaks if referenced elsewhere
+def load_daily_metrics() -> pd.DataFrame:
+    return load_labor_hours()
 
 
 @st.cache_data(ttl=3600)
 def load_all():
-    """Return (export_df, metrics_df) together so both cache together."""
-    return load_export(), load_daily_metrics()
+    """Return (export_df, labor_df) together so both cache together."""
+    return load_export(), load_labor_hours()

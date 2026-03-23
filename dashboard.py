@@ -13,7 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, date
 
-from data_loader import load_export, load_daily_metrics
+from data_loader import load_export, load_labor_hours
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -60,10 +60,10 @@ COLORS = ["#4c9aff", "#f56565", "#68d391", "#f6ad55", "#b794f4", "#76e4f7"]
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_data():
-    return load_export(), load_daily_metrics()
+    return load_export(), load_labor_hours()
 
 with st.spinner("Loading data from Google Sheets…"):
-    export_df, metrics_df = get_data()
+    export_df, labor_df = get_data()
 
 if export_df.empty:
     st.error("No shipping data found in the Export tab. Please run the weekly export first.")
@@ -102,14 +102,14 @@ mask = (
 )
 df = export_df[mask].copy()
 
-if not metrics_df.empty:
-    m_mask = (
-        (metrics_df["Date"].dt.date >= start_date) &
-        (metrics_df["Date"].dt.date <= end_date)
+if not labor_df.empty:
+    l_mask = (
+        (labor_df["Date"].dt.date >= start_date) &
+        (labor_df["Date"].dt.date <= end_date)
     )
-    mdf = metrics_df[m_mask].copy()
+    ldf = labor_df[l_mask].copy()
 else:
-    mdf = pd.DataFrame()
+    ldf = pd.DataFrame()
 
 st.sidebar.markdown("---")
 st.sidebar.caption(f"Showing {len(df):,} shipments  \n{start_date} → {end_date}")
@@ -126,26 +126,53 @@ st.caption(f"Jack Archer merchant  ·  {start_date.strftime('%b %d, %Y')} – {e
 
 # ── KPI cards ─────────────────────────────────────────────────────────────────
 
-total_orders = len(df)
-avg_ship_cost = df["Original Invoice"].mean() if "Original Invoice" in df.columns else 0
+total_orders  = len(df)
+avg_ship_cost = df["Original Invoice"].mean() if "Original Invoice" in df.columns else None
 
-# OPLH and labor cost from metrics tab
-avg_oplh = mdf["OPLH"].dropna().mean() if not mdf.empty and "OPLH" in mdf.columns else None
-avg_labor_cost = (
-    mdf["Total Labor Cost Per Order"].dropna().mean()
-    if not mdf.empty and "Total Labor Cost Per Order" in mdf.columns else None
-)
-avg_pkg_cost = (
-    mdf["Packaging Cost Per Order"].dropna().mean()
-    if not mdf.empty and "Packaging Cost Per Order" in mdf.columns else None
-)
+# Build daily_metrics by joining labor hours with daily order counts from export
+if not ldf.empty:
+    daily_orders = (
+        df.groupby(df["Transaction Date"].dt.normalize())
+          .size()
+          .reset_index(name="Daily Orders")
+          .rename(columns={"Transaction Date": "Date"})
+    )
+    # Normalize labor Date to midnight so the join key matches
+    ldf["Date"] = ldf["Date"].dt.normalize()
+    mdf = ldf.merge(daily_orders, on="Date", how="left")
+    mdf["Daily Orders"] = mdf["Daily Orders"].fillna(0)
+
+    # OPLH = orders / outbound hours (avoid division by zero)
+    mdf["OPLH"] = mdf.apply(
+        lambda r: r["Daily Orders"] / r["Outbound Hours"]
+        if r.get("Outbound Hours", 0) > 0 else None,
+        axis=1,
+    )
+
+    # Labor cost: pull rate from sidebar (default $18/hr)
+    labor_rate = st.sidebar.number_input("Labor rate ($/hr)", value=18.0, step=0.5, min_value=1.0)
+    mdf["Total Labor Cost Per Order"] = mdf.apply(
+        lambda r: (r["Total Hours"] * labor_rate) / r["Daily Orders"]
+        if r["Daily Orders"] > 0 else None,
+        axis=1,
+    )
+else:
+    mdf = pd.DataFrame()
+    labor_rate = 18.0
+
+avg_oplh       = mdf["OPLH"].dropna().mean()        if not mdf.empty and "OPLH" in mdf.columns else None
+avg_labor_cost = mdf["Total Labor Cost Per Order"].dropna().mean() \
+                 if not mdf.empty and "Total Labor Cost Per Order" in mdf.columns else None
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Total Shipments", f"{total_orders:,}")
-k2.metric("Avg Shipping Cost / Order", f"${avg_ship_cost:.2f}" if pd.notna(avg_ship_cost) and avg_ship_cost != 0 else "—")
-k3.metric("Avg OPLH", f"{avg_oplh:.1f}" if avg_oplh and avg_oplh == avg_oplh else "—",
+k2.metric("Avg Shipping Cost / Order",
+          f"${avg_ship_cost:.2f}" if pd.notna(avg_ship_cost) and avg_ship_cost != 0 else "—")
+k3.metric("Avg OPLH",
+          f"{avg_oplh:.1f}" if pd.notna(avg_oplh) else "—",
           help="Orders Per Labor Hour (outbound)")
-k4.metric("Avg Labor Cost / Order", f"${avg_labor_cost:.2f}" if avg_labor_cost and avg_labor_cost == avg_labor_cost else "—")
+k4.metric("Avg Labor Cost / Order",
+          f"${avg_labor_cost:.2f}" if pd.notna(avg_labor_cost) else "—")
 
 # ── Row 2: Carrier mix + Avg cost by carrier ─────────────────────────────────
 
@@ -280,12 +307,12 @@ if not mdf.empty and "OPLH" in mdf.columns:
 
 # ── Row 6: Data table ─────────────────────────────────────────────────────────
 
-with st.expander("View raw daily metrics table"):
+with st.expander("View raw daily labor + OPLH table"):
     if not mdf.empty:
         display_cols = [c for c in [
-            "Date", "Daily Orders", "Labor Hours Outbound", "Labor Hours Total",
-            "OPLH", "Total Labor Cost Per Order", "Outbound Labor Cost Per Order",
-            "Packaging Cost Per Order"
+            "Date", "Daily Orders", "Outbound Hours", "Total Hours",
+            "Emp Hours", "Temp Hours", "Headcount",
+            "OPLH", "Total Labor Cost Per Order",
         ] if c in mdf.columns]
         st.dataframe(
             mdf[display_cols].sort_values("Date", ascending=False).reset_index(drop=True),
@@ -293,4 +320,4 @@ with st.expander("View raw daily metrics table"):
             height=400,
         )
     else:
-        st.info("Daily Metrics tab not yet available. Run the Apps Script first.")
+        st.info("No labor hours data found. Make sure 'Labor Hours 2025' / 'Labor Hours 2026' tabs exist in the sheet.")
