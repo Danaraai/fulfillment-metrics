@@ -103,10 +103,10 @@ def automate_chrome_export(report_url: str, export_date: date) -> bool:
     print("  Opening Chrome and loading report...")
     open_chrome(report_url)
 
-    # 2 — Wait for the vcMenuBtn (the ··· button) to appear — up to 5 min
+    # 2 — Wait for the date slicer inputs to appear — means the report has rendered
     print("  Waiting for report to render (up to 5 min)...")
     for attempt in range(150):
-        result = _run_js("document.querySelector('button.vcMenuBtn') ? 'ready' : 'loading'")
+        result = _run_js("document.querySelectorAll('input.date-slicer-datepicker').length >= 2 ? 'ready' : 'loading'")
         if "ready" in result:
             print(f"  Report ready (after ~{attempt*2}s)")
             break
@@ -169,9 +169,30 @@ def automate_chrome_export(report_url: str, export_date: date) -> bool:
     print(f"  Date JS: {set_result}")
     time.sleep(3)   # Let data reload with new date range
 
-    # 5 — Click the ··· More Options button
+    # 5 — Hover over the table visual to reveal the ··· More Options button, then click it
     print("  Clicking More Options (···)...")
-    _run_js("document.querySelector('button.vcMenuBtn').click()")
+    # Hover over the last visual container (the data table is always last)
+    _run_js("""
+(function() {
+    var hosts = document.querySelectorAll('.visualContainerHost');
+    if (!hosts.length) return 'no hosts';
+    var tbl = hosts[hosts.length - 1];
+    tbl.dispatchEvent(new MouseEvent('mouseover',   {bubbles: true}));
+    tbl.dispatchEvent(new MouseEvent('mouseenter',  {bubbles: true}));
+    return 'hovered ' + hosts.length + ' visuals';
+})()
+""")
+    time.sleep(1)   # give hover a moment to reveal the header buttons
+    click_result = _run_js("""
+(function() {
+    // 'More options' buttons appear in visual headers on hover
+    var btns = Array.from(document.querySelectorAll('button[title="More options"]'));
+    if (!btns.length) return 'not found';
+    btns[btns.length - 1].click();   // last one = table visual
+    return 'clicked (' + btns.length + ' found)';
+})()
+""")
+    print(f"  More options result: {click_result}")
     time.sleep(1)
 
     # 6 — Click "Export data" in the context menu
@@ -464,6 +485,7 @@ def main():
     parser.add_argument("--upload-only", action="store_true", help="Skip Chrome, use latest ~/Downloads/data.csv")
     parser.add_argument("--schedule",    action="store_true", help="Install daily 4pm launchd job")
     parser.add_argument("--unschedule",  action="store_true", help="Remove the scheduled job")
+    parser.add_argument("--date",        type=str, default=None, help="Export a specific date (YYYY-MM-DD), default=yesterday")
     args = parser.parse_args()
 
     if args.unschedule:
@@ -476,11 +498,16 @@ def main():
         install_schedule(config)
         return
 
-    export_date = get_yesterday()
+    if args.date:
+        export_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+        label = f"(custom: {args.date})"
+    else:
+        export_date = get_yesterday()
+        label = "(yesterday)"
 
     print("=" * 62)
     print("  Jack Archer Daily Export")
-    print(f"  Exporting : {fmt(export_date)}  (yesterday)")
+    print(f"  Exporting : {fmt(export_date)}  {label}")
     print(f"  Today     : {fmt(date.today())}")
     print("=" * 62)
 
