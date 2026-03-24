@@ -11,8 +11,9 @@
     "skip_header_if_data_exists": true,
     "clear_tab_before_append": false
   },
+  "labor_hours_sheet_id": "1QHSkxmnuUaQtVsiTQL5YvCqOKZqDnMr1WqJODKKAqh0",
   "schedule": {
-    "hour": 16,
+    "hour": 14,
     "minute": 0
   }
 }

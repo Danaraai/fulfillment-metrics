@@ -132,60 +132,103 @@ def load_export() -> pd.DataFrame:
     return combined
 
 
+def _parse_hms(s: str) -> float:
+    """Convert 'HH:MM:SS' (where HH can exceed 24) to decimal hours."""
+    try:
+        parts = str(s).strip().split(":")
+        return int(parts[0]) + int(parts[1]) / 60 + (int(parts[2]) if len(parts) > 2 else 0) / 3600
+    except Exception:
+        return 0.0
+
+
 @st.cache_data(ttl=3600, show_spinner="Loading labor hours…")
 def load_labor_hours() -> pd.DataFrame:
     """
-    Load labor hours from 'Labor Hours 2025' and 'Labor Hours 2026' tabs.
-    Columns: Date | Total Hours | Emp Hours | Temp Hours |
-             Outbound Hours | Inbound Hours | Headcount
+    Load labor hours from the source daily-tracking spreadsheet.
+    Each tab is named 'Mon D' (e.g. 'March 23'). Summary is in O1:P12.
+    Columns returned: Date | Total Hours | Emp Hours | Temp Hours |
+                      Outbound Hours | Inbound Hours
     """
+    import json, pathlib, calendar
+
+    cfg_path = pathlib.Path(__file__).parent / "config.json"
+    labor_sheet_id = json.loads(cfg_path.read_text()).get(
+        "labor_hours_sheet_id", ""
+    )
+    if not labor_sheet_id:
+        return pd.DataFrame()
+
     creds = _get_creds()
     svc   = _service(creds)
 
-    frames = []
-    for tab in ("Labor Hours 2025", "Labor Hours 2026"):
+    # Get all tab names
+    try:
+        meta = svc.spreadsheets().get(spreadsheetId=labor_sheet_id).execute()
+        all_tabs = [s["properties"]["title"] for s in meta["sheets"]]
+    except Exception:
+        return pd.DataFrame()
+
+    # Month name → number map  ("Jan" → 1, "Feb" → 2, "March" → 3, …)
+    month_map = {}
+    for i, name in enumerate(calendar.month_name):
+        if name:
+            month_map[name.lower()] = i
+    # Short forms
+    for i, name in enumerate(calendar.month_abbr):
+        if name:
+            month_map[name.lower()] = i
+
+    rows = []
+    for tab in all_tabs:
+        parts = tab.strip().split()
+        if len(parts) != 2:
+            continue
+        month_num = month_map.get(parts[0].lower())
+        if not month_num:
+            continue
         try:
-            result = svc.spreadsheets().values().get(
-                spreadsheetId=SHEET_ID,
-                range=f"{tab}!A1:G"
-            ).execute()
+            day = int(parts[1])
+        except ValueError:
+            continue
+
+        # Infer year: Jan–Dec tabs in "Labor Hours 2026" sheet → 2026
+        # (If the sheet ever spans two years, revisit.)
+        year = 2026
+
+        try:
+            tab_date = pd.Timestamp(year=year, month=month_num, day=day)
         except Exception:
             continue
 
-        values = result.get("values", [])
-        if len(values) < 2:
+        # Read summary section O1:P12
+        try:
+            res = svc.spreadsheets().values().get(
+                spreadsheetId=labor_sheet_id,
+                range=f"'{tab}'!O1:P12"
+            ).execute()
+            vals = res.get("values", [])
+        except Exception:
             continue
 
-        headers = values[0]
-        rows    = values[1:]
-        rows    = [r + [""] * (len(headers) - len(r)) for r in rows]
-        frame   = pd.DataFrame(rows, columns=headers)
+        # Build label→value dict (skip empty rows)
+        summary = {r[0]: r[1] for r in vals if len(r) >= 2}
 
-        # Column A is always the date regardless of its header name ("Week", "Date", etc.)
-        date_col = frame.columns[0]
-        frame[date_col] = pd.to_datetime(frame[date_col], errors="coerce",
-                                         infer_datetime_format=True)
-        frame = frame.dropna(subset=[date_col])
-        frame = frame.rename(columns={date_col: "Date"})
+        rows.append({
+            "Date":           tab_date,
+            "Total Hours":    _parse_hms(summary.get("Total Labor Hours",    summary.get("Total Emp/Temp Hours", "0"))),
+            "Emp Hours":      _parse_hms(summary.get("Total Emp Hours",      "0")),
+            "Temp Hours":     _parse_hms(summary.get("Total Temp Hours",     "0")),
+            "Outbound Hours": _parse_hms(summary.get("Total Outbound Hours", "0")),
+            "Inbound Hours":  _parse_hms(summary.get("Total Inbound Hours",  "0")),
+        })
 
-        for col in ["Total Hours", "Emp Hours", "Temp Hours",
-                    "Outbound Hours", "Inbound Hours", "Headcount"]:
-            if col in frame.columns:
-                frame[col] = pd.to_numeric(frame[col], errors="coerce").fillna(0)
-
-        frames.append(frame)
-
-    if not frames:
+    if not rows:
         return pd.DataFrame()
 
-    combined = pd.concat(frames, ignore_index=True)
-    combined = (
-        combined
-        .sort_values("Date")
-        .drop_duplicates(subset=["Date"], keep="last")
-        .reset_index(drop=True)
-    )
-    return combined
+    df = pd.DataFrame(rows).sort_values("Date").drop_duplicates(
+        subset=["Date"], keep="last"
+    ).reset_index(drop=True)
+    return df
 
 
 @st.cache_data(ttl=3600, show_spinner="Loading daily metrics…")
