@@ -103,56 +103,70 @@ def automate_chrome_export(report_url: str, export_date: date) -> bool:
     print("  Opening Chrome and loading report...")
     open_chrome(report_url)
 
-    # 2 — Wait for the vcMenuBtn (the ··· button) to appear — up to 90s
-    print("  Waiting for report to render...")
-    for attempt in range(45):
+    # 2 — Wait for the vcMenuBtn (the ··· button) to appear — up to 5 min
+    print("  Waiting for report to render (up to 5 min)...")
+    for attempt in range(150):
         result = _run_js("document.querySelector('button.vcMenuBtn') ? 'ready' : 'loading'")
         if "ready" in result:
             print(f"  Report ready (after ~{attempt*2}s)")
             break
+        if attempt % 15 == 0 and attempt > 0:
+            print(f"  Still loading... ({attempt*2}s)")
         time.sleep(2)
     else:
-        print("  WARNING: Report did not fully load. Trying anyway...")
+        print("  WARNING: Report did not fully load after 5 min. Trying anyway...")
 
     time.sleep(2)
 
     # 3 — Set BOTH start and end date inputs to export_date (single day)
+    # Uses Angular-compatible native value setter (execCommand doesn't trigger ng-model)
     print(f"  Setting date slicer to {date_str} (start and end)...")
     set_result = _run_js(f"""
 (function() {{
-    var inputs = Array.from(document.querySelectorAll('input'))
+    var inputs = Array.from(document.querySelectorAll('input.date-slicer-datepicker'));
+    if (inputs.length < 2) {{
+        inputs = Array.from(document.querySelectorAll('input'))
                       .filter(function(i) {{ return /\\d+\\/\\d+\\/\\d+/.test(i.value); }});
-    if (inputs.length < 2) {{ return 'error: only ' + inputs.length + ' date inputs found'; }}
-    function setInput(el, val) {{
-        el.focus(); el.select();
-        document.execCommand('selectAll');
-        document.execCommand('insertText', false, val);
-        el.dispatchEvent(new KeyboardEvent('keydown',  {{bubbles:true, cancelable:true, key:'Enter', keyCode:13}}));
-        el.dispatchEvent(new KeyboardEvent('keypress', {{bubbles:true, cancelable:true, key:'Enter', keyCode:13}}));
-        el.dispatchEvent(new KeyboardEvent('keyup',    {{bubbles:true, cancelable:true, key:'Enter', keyCode:13}}));
     }}
-    setInput(inputs[0], '{date_str}');
-    setInput(inputs[inputs.length - 1], '{date_str}');
-    return 'set start+end to {date_str}';
+    if (inputs.length < 2) {{ return 'error: only ' + inputs.length + ' date inputs found'; }}
+
+    var startInput = inputs[0];
+    var endInput   = inputs[inputs.length - 1];
+
+    // Parse max allowed date from aria-label (e.g. "...to 3/20/2026")
+    var aria  = startInput.getAttribute('aria-label') || '';
+    var match = aria.match(/to (\\d+\\/\\d+\\/\\d+)/);
+    var maxDate = match ? match[1] : null;
+
+    // Use requested date, but cap at max available date in the dataset
+    var target = '{date_str}';
+    if (maxDate) {{
+        var tParts = target.split('/');
+        var mParts = maxDate.split('/');
+        var tTime  = new Date(tParts[2], tParts[0]-1, tParts[1]).getTime();
+        var mTime  = new Date(mParts[2], mParts[0]-1, mParts[1]).getTime();
+        if (tTime > mTime) {{ target = maxDate; }}
+    }}
+
+    var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+
+    function setAngularInput(el, val) {{
+        el.focus();
+        nativeSetter.call(el, val);
+        el.dispatchEvent(new Event('input',  {{bubbles: true}}));
+        el.dispatchEvent(new Event('change', {{bubbles: true}}));
+        el.dispatchEvent(new KeyboardEvent('keydown', {{bubbles:true, key:'Enter', keyCode:13}}));
+        el.dispatchEvent(new KeyboardEvent('keyup',   {{bubbles:true, key:'Enter', keyCode:13}}));
+        el.blur();
+    }}
+
+    // Set end FIRST so start constraint (must be <= end) is satisfied
+    setAngularInput(endInput, target);
+    setAngularInput(startInput, target);
+    return 'target=' + target + ' | start=' + startInput.value + ' end=' + endInput.value;
 }})()
 """)
     print(f"  Date JS: {set_result}")
-    time.sleep(2)
-
-    # 4 — If a calendar popup appeared, click the correct day number
-    cal_result = _run_js(f"""
-(function() {{
-    var cells = Array.from(document.querySelectorAll(
-        'td, [class*="day"], [class*="calendar"] button, [role="gridcell"] button'
-    ));
-    var target = cells.find(function(c) {{
-        return c.textContent.trim() === '{day_num}' && !c.disabled && !c.classList.contains('disabled');
-    }});
-    if (target) {{ target.click(); return 'clicked day {day_num}'; }}
-    return 'no calendar found';
-}})()
-""")
-    print(f"  Calendar JS: {cal_result}")
     time.sleep(3)   # Let data reload with new date range
 
     # 5 — Click the ··· More Options button
