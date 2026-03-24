@@ -1,5 +1,5 @@
 """
-dashboard.py  —  OpenStore Operations Dashboard
+dashboard.py  —  FC1 Performance Dashboard
 Run locally:  streamlit run dashboard.py
 Deploy:       push to GitHub → connect on share.streamlit.io
 """
@@ -159,7 +159,7 @@ df["Week"] = week_start(df["Transaction Date"])
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
-st.title("📦 OpenStore Operations Dashboard")
+st.title("📦 FC1 Performance Dashboard")
 st.caption(f"Jack Archer merchant  ·  {start_date.strftime('%b %d, %Y')} – {end_date.strftime('%b %d, %Y')}")
 
 # ── Build daily table (used for KPIs + daily table section) ──────────────────
