@@ -706,16 +706,26 @@ else:
             textfont=dict(size=11, color="#c9184a"),
         )
 
-        # Pre-neg total shown as hover only — avoids label overlap on dense weeks
-        fig_neg.add_scatter(
-            x=weekly_cmp["Week Label"],
-            y=pre_neg_col,
-            mode="markers",
-            marker=dict(size=0, opacity=0),
-            customdata=pre_neg_col.values,
-            hovertemplate="Pre-Neg: $%{customdata:,.0f}<extra></extra>",
-            showlegend=False,
-        )
+        # "Pre: $X,XXX" annotations — placed via pixel yshift so they always sit
+        # cleanly above the bar top without overlapping bar text.
+        # y = top of each bar (max of pre_neg and post_neg); yshift pushes the
+        # text 14 px above that in screen space regardless of bar height.
+        bar_tops = post_neg_col.clip(lower=pre_neg_col)   # max(post_neg, pre_neg)
+        max_bar  = float(bar_tops.max())
+
+        pre_annotations = [
+            dict(
+                x=row["Week Label"],
+                y=float(bar_tops.iloc[i]),
+                text=f"Pre: ${row['Pre_Neg_Total']:,.0f}",
+                showarrow=False,
+                yshift=14,
+                font=dict(size=9, color="#6b7a99", family="monospace"),
+                xanchor="center",
+                yanchor="bottom",
+            )
+            for i, (_, row) in enumerate(weekly_cmp.iterrows())
+        ]
 
         fig_neg.update_layout(
             **PLOTLY_THEME,
@@ -724,9 +734,11 @@ else:
             yaxis_title="Total Shipping Cost ($)",
             yaxis_tickprefix="$",
             yaxis_tickformat=",",
+            yaxis_range=[0, max_bar * 1.14],   # headroom so labels aren't clipped
+            annotations=pre_annotations,
             legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
             margin=dict(t=40, b=80, l=10, r=10),
-            height=460,
+            height=500,
         )
         st.plotly_chart(fig_neg, use_container_width=True)
 
