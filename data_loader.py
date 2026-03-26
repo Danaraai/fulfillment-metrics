@@ -267,6 +267,10 @@ def load_daily_metrics() -> pd.DataFrame:
     return df
 
 
+# Module-level dict to surface errors from the cached load_comparison function
+_comparison_load_error: dict = {}
+
+
 @st.cache_data(ttl=3600, show_spinner="Loading negotiation comparison data…")
 def load_comparison() -> pd.DataFrame:
     """
@@ -283,8 +287,7 @@ def load_comparison() -> pd.DataFrame:
             range="Enriched_Data!A1:AH"
         ).execute()
     except Exception as e:
-        import warnings
-        warnings.warn(f"Could not load comparison sheet: {e}")
+        _comparison_load_error["msg"] = str(e)
         return pd.DataFrame()
 
     values = result.get("values", [])

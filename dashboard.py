@@ -13,7 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, date
 
-from data_loader import load_export, load_labor_hours, load_daily_metrics, load_comparison
+from data_loader import load_export, load_labor_hours, load_daily_metrics, load_comparison, _comparison_load_error
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -593,7 +593,11 @@ st.markdown('<div class="section-header">Shipping Cost: Pre vs Post Negotiation<
             unsafe_allow_html=True)
 
 if comparison_df.empty:
-    st.info("Negotiation comparison data not available. Run `python3 enrich_shipments.py` to generate it.")
+    err = _comparison_load_error.get("msg", "")
+    if err:
+        st.error(f"Could not load comparison data: {err}")
+    else:
+        st.info("Negotiation comparison data not available. Run `python3 enrich_shipments.py` to generate it.")
 else:
     # Apply same date filter as the rest of the dashboard
     cmp_mask = (
