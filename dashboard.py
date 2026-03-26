@@ -495,6 +495,7 @@ if "Transit Time (Days)" in df.columns and "Carrier" in df.columns:
         margin=dict(t=20, b=80, l=10, r=10),
         height=400,
     )
+    fig_transit.update_xaxes(type="category")   # prevent "11-03" being parsed as year 2011
     st.plotly_chart(fig_transit, use_container_width=True)
 
 # ── Chart 5: Carrier mix + avg cost ──────────────────────────────────────────
@@ -757,6 +758,7 @@ else:
             margin=dict(t=40, b=80, l=10, r=10),
             height=500,
         )
+        fig_neg.update_xaxes(type="category")   # prevent "11-03" being parsed as year 2011
         st.plotly_chart(fig_neg, use_container_width=True)
 
         # ── Carrier breakdown toggle ─────────────────────────────────────────
