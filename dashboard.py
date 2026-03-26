@@ -13,7 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, date
 
-from data_loader import load_export, load_labor_hours, load_daily_metrics
+from data_loader import load_export, load_labor_hours, load_daily_metrics, load_comparison
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -97,6 +97,9 @@ def get_data():
 
 with st.spinner("Loading data from Google Sheets…"):
     export_df, labor_df, metrics_df = get_data()
+
+with st.spinner("Loading negotiation comparison data…"):
+    comparison_df = load_comparison()
 
 if export_df.empty:
     st.error("No shipping data found in the Export tab. Please run the weekly export first.")
@@ -583,3 +586,154 @@ if pd.notna(avg_oplh) and avg_oplh > 0 and pd.notna(avg_labor_cost):
     )
 else:
     st.caption(f"📊 {len(show):,} days  ·  Labor hours data not available for this range")
+
+# ── Chart 6: Pre vs Post Negotiation Shipping Cost (Stacked Weekly Bar) ────────
+
+st.markdown('<div class="section-header">Shipping Cost: Pre vs Post Negotiation</div>',
+            unsafe_allow_html=True)
+
+if comparison_df.empty:
+    st.info("Negotiation comparison data not available. Run `python3 enrich_shipments.py` to generate it.")
+else:
+    # Apply same date filter as the rest of the dashboard
+    cmp_mask = (
+        (comparison_df["Transaction Date"].dt.date >= start_date) &
+        (comparison_df["Transaction Date"].dt.date <= end_date) &
+        (comparison_df["Rate_Lookup_Status"] == "OK")
+    )
+    cmp = comparison_df[cmp_mask].copy()
+
+    if cmp.empty:
+        st.info("No comparison data available for the selected date range.")
+    else:
+        # Week aggregation (Monday-anchored, same as rest of dashboard)
+        cmp["Week"] = week_start(cmp["Transaction Date"])
+
+        weekly_cmp = (
+            cmp.groupby("Week")
+               .agg(
+                   Shipments        =("OrderID",              "count"),
+                   Pre_Neg_Total    =("Pre_Neg_Total_Rate",   "sum"),
+                   Post_Neg_Total   =("Current_Total",        "sum"),
+                   Total_Savings    =("Savings_Per_Shipment", "sum"),
+               )
+               .reset_index()
+               .sort_values("Week")
+        )
+        weekly_cmp["Week Label"] = weekly_cmp["Week"].dt.strftime("%-m-%d")
+
+        # ── KPI summary row ──────────────────────────────────────────────────
+        total_pre  = cmp["Pre_Neg_Total_Rate"].sum()
+        total_post = cmp["Current_Total"].sum()
+        total_sav  = cmp["Savings_Per_Shipment"].sum()
+        pct_saved  = (total_sav / total_pre * 100) if total_pre else 0
+        avg_sav_per_ship = total_sav / len(cmp) if len(cmp) else 0
+
+        n1, n2, n3, n4 = st.columns(4)
+        n1.metric("Pre-Neg Total Cost",    f"${total_pre:,.0f}")
+        n2.metric("Post-Neg Total Cost",   f"${total_post:,.0f}")
+        n3.metric("Total Savings",         f"${total_sav:,.0f}",
+                  delta=f"{pct_saved:.1f}% vs pre-neg",
+                  delta_color="normal")
+        n4.metric("Avg Savings / Shipment", f"${avg_sav_per_ship:.2f}")
+
+        st.markdown("")
+
+        # ── Stacked bar: Post-Neg (bottom) + Savings (top) = Pre-Neg ────────
+        # Savings can be negative for some carriers; clamp display min to 0
+        fig_neg = go.Figure()
+
+        # Bottom stack: post-negotiation cost (blue)
+        fig_neg.add_bar(
+            x=weekly_cmp["Week Label"],
+            y=weekly_cmp["Post_Neg_Total"].round(2),
+            name="Post-Negotiation Cost",
+            marker_color="#4361ee",
+            text=weekly_cmp["Post_Neg_Total"].map("${:,.0f}".format),
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(size=11, color="#ffffff"),
+        )
+
+        # Top stack: savings (green when positive, red when negative)
+        savings_colors = [
+            "#43a878" if v >= 0 else "#f72585"
+            for v in weekly_cmp["Total_Savings"]
+        ]
+        fig_neg.add_bar(
+            x=weekly_cmp["Week Label"],
+            y=weekly_cmp["Total_Savings"].round(2),
+            name="Savings vs Pre-Neg",
+            marker_color=savings_colors,
+            text=weekly_cmp["Total_Savings"].map(
+                lambda v: f"+${v:,.0f}" if v >= 0 else f"-${abs(v):,.0f}"
+            ),
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(size=11, color="#ffffff"),
+        )
+
+        # Pre-neg total label floating above each bar
+        fig_neg.add_scatter(
+            x=weekly_cmp["Week Label"],
+            y=(weekly_cmp["Post_Neg_Total"] + weekly_cmp["Total_Savings"].clip(lower=0) + 200),
+            mode="text",
+            text=weekly_cmp["Pre_Neg_Total"].map("Pre: ${:,.0f}".format),
+            textfont=dict(size=10, color="#6b7a99", family="monospace"),
+            showlegend=False,
+        )
+
+        fig_neg.update_layout(
+            **PLOTLY_THEME,
+            barmode="stack",
+            xaxis_title="Week (Monday)",
+            yaxis_title="Total Shipping Cost ($)",
+            yaxis_tickprefix="$",
+            yaxis_tickformat=",",
+            legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
+            margin=dict(t=40, b=80, l=10, r=10),
+            height=460,
+        )
+        st.plotly_chart(fig_neg, use_container_width=True)
+
+        # ── Carrier breakdown toggle ─────────────────────────────────────────
+        with st.expander("📊 Savings breakdown by carrier"):
+            if "Carrier" in cmp.columns:
+                carrier_cmp = (
+                    cmp.groupby("Carrier")
+                       .agg(
+                           Shipments    =("OrderID",              "count"),
+                           Pre_Neg      =("Pre_Neg_Total_Rate",   "sum"),
+                           Post_Neg     =("Current_Total",        "sum"),
+                           Savings      =("Savings_Per_Shipment", "sum"),
+                       )
+                       .reset_index()
+                       .sort_values("Savings", ascending=False)
+                )
+                carrier_cmp["Avg Savings / Shipment"] = (
+                    carrier_cmp["Savings"] / carrier_cmp["Shipments"]
+                ).round(2)
+                carrier_cmp["% Saved"] = (
+                    carrier_cmp["Savings"] / carrier_cmp["Pre_Neg"] * 100
+                ).round(1)
+
+                st.dataframe(
+                    carrier_cmp.style.format({
+                        "Pre_Neg":               "${:,.2f}",
+                        "Post_Neg":              "${:,.2f}",
+                        "Savings":               "${:,.2f}",
+                        "Avg Savings / Shipment":"${:.2f}",
+                        "% Saved":               "{:.1f}%",
+                        "Shipments":             "{:,}",
+                    }).applymap(
+                        lambda v: "color: #43a878; font-weight:600" if isinstance(v, (int, float)) and v > 0
+                                  else ("color: #f72585; font-weight:600" if isinstance(v, (int, float)) and v < 0 else ""),
+                        subset=["Savings", "Avg Savings / Shipment"]
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption(
+                    "🟢 Green = savings achieved vs pre-negotiation rates  ·  "
+                    "🔴 Red = carrier rate is higher post-negotiation (rate table may not apply to this carrier)"
+                )

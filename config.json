@@ -12,6 +12,8 @@
     "clear_tab_before_append": false
   },
   "labor_hours_sheet_id": "1QHSkxmnuUaQtVsiTQL5YvCqOKZqDnMr1WqJODKKAqh0",
+  "pre_neg_rates_sheet_id": "1CP5VwyqMmEev5ZcQZB67JJwawfibJGANPTo0PFXewAM",
+  "comparison_sheet_id": "1DyOwWoFSiAmtf5pDuaOZKCe9wPXwwkBZnXX5BsxMacg",
   "schedule": {
     "hour": 14,
     "minute": 0

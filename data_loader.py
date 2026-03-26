@@ -17,8 +17,9 @@ import streamlit as st
 
 warnings.filterwarnings("ignore")
 
-SHEET_ID = "1tuo7knxTvOR3snd_u1AnnW1iiN9l1-TaOLi-YaVqLM0"
-SCOPES   = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+SHEET_ID            = "1tuo7knxTvOR3snd_u1AnnW1iiN9l1-TaOLi-YaVqLM0"
+COMPARISON_SHEET_ID = "1DyOwWoFSiAmtf5pDuaOZKCe9wPXwwkBZnXX5BsxMacg"
+SCOPES              = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -26,10 +27,14 @@ SCOPES   = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 def _get_creds():
     """Return Google API credentials (service account on cloud, OAuth locally)."""
     # Streamlit Cloud: service account stored in secrets
-    if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
-        from google.oauth2.service_account import Credentials
-        info = json.loads(st.secrets["gcp_service_account"])
-        return Credentials.from_service_account_info(info, scopes=SCOPES)
+    # Wrap in try/except — accessing st.secrets raises if secrets.toml is missing locally
+    try:
+        if "gcp_service_account" in st.secrets:
+            from google.oauth2.service_account import Credentials
+            info = json.loads(st.secrets["gcp_service_account"])
+            return Credentials.from_service_account_info(info, scopes=SCOPES)
+    except Exception:
+        pass  # No secrets.toml locally — fall through to OAuth token
 
     # Local dev: cached OAuth token
     token_path = os.path.join(os.path.dirname(__file__), "google_token.pickle")
@@ -258,6 +263,63 @@ def load_daily_metrics() -> pd.DataFrame:
                    .str.replace(r"[\$,]", "", regex=True)
                    .pipe(pd.to_numeric, errors="coerce")
         )
+
+    return df
+
+
+@st.cache_data(ttl=3600, show_spinner="Loading negotiation comparison data…")
+def load_comparison() -> pd.DataFrame:
+    """
+    Load Enriched_Data tab from the Shipping Pre vs Post Negotiation sheet.
+    Columns: OrderID, Transaction Date, Carrier, Zone Used, Billable Weight(Oz),
+             Pre_Neg_Total_Rate, Current_Total, Savings_Per_Shipment, Rate_Lookup_Status, …
+    """
+    creds = _get_creds()
+    svc   = _service(creds)
+
+    try:
+        result = svc.spreadsheets().values().get(
+            spreadsheetId=COMPARISON_SHEET_ID,
+            range="Enriched_Data!A1:AH"
+        ).execute()
+    except Exception as e:
+        import warnings
+        warnings.warn(f"Could not load comparison sheet: {e}")
+        return pd.DataFrame()
+
+    values = result.get("values", [])
+    if not values:
+        return pd.DataFrame()
+
+    headers = values[0]
+    rows    = values[1:]
+    rows    = [r + [""] * (len(headers) - len(r)) for r in rows]
+    df      = pd.DataFrame(rows, columns=headers)
+
+    # Parse Transaction Date
+    if "Transaction Date" in df.columns:
+        df["Transaction Date"] = pd.to_datetime(
+            df["Transaction Date"], errors="coerce"
+        )
+        df = df.dropna(subset=["Transaction Date"])
+
+    # Parse all numeric columns
+    numeric_cols = [
+        "Pre_Neg_Base_Rate", "Pre_Neg_Fuel_Surcharge", "Pre_Neg_Residential_Sur",
+        "Pre_Neg_DAS_Surcharge", "Pre_Neg_Total_Rate", "Current_Total",
+        "Savings_Per_Shipment", "Original Invoice", "Fulfillment without Surcharge",
+        "Surcharge Applied", "WMS Fuel Surcharge", "Delivery Area Surcharge",
+        "Residential Area Surcharge", "Billable Weight(Oz)", "Actual Weight (Oz)",
+        "Dim Weight(Oz)",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = (
+                df[col].astype(str)
+                       .str.replace(r"[\$,]", "", regex=True)
+                       .pipe(pd.to_numeric, errors="coerce")
+                       .fillna(0)
+            )
 
     return df
 
