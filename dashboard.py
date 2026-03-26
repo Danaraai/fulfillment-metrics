@@ -699,7 +699,7 @@ else:
             y=premium_seg,
             name="Increase vs Pre-Neg",
             marker_color="rgba(247, 37, 133, 0.28)",
-            marker_line=dict(color="#f72585", width=1),
+            marker_line=dict(width=0),
             text=premium_seg.map(lambda v: f"−${v:,.0f}" if v > 0 else ""),
             textposition="inside",
             insidetextanchor="middle",
