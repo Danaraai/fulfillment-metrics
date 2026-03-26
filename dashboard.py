@@ -127,6 +127,8 @@ if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
 else:
     start_date, end_date = default_start, max_date
 
+granularity = st.sidebar.selectbox("Chart granularity", ["Weekly", "Monthly"], index=0)
+
 # Apply date filter to export
 mask = (
     (export_df["Transaction Date"].dt.date >= start_date) &
@@ -152,13 +154,26 @@ if st.sidebar.button("🔄 Refresh data"):
     st.cache_data.clear()
     st.rerun()
 
-# ── Week helper ──────────────────────────────────────────────────────────────
-# Monday-anchored week start, normalized (no time component)
+# ── Period helper ─────────────────────────────────────────────────────────────
+# Returns the period-start timestamp for each row based on granularity setting.
 
 def week_start(series: pd.Series) -> pd.Series:
+    """Monday-anchored week start, normalized (no time component)."""
     return (series - pd.to_timedelta(series.dt.dayofweek, unit="D")).dt.normalize()
 
-df["Week"] = week_start(df["Transaction Date"])
+def period_start(series: pd.Series) -> pd.Series:
+    """Return week or month start depending on sidebar granularity selection."""
+    if granularity == "Monthly":
+        return series.dt.to_period("M").dt.to_timestamp()
+    return week_start(series)
+
+def period_label(ts_series: pd.Series) -> pd.Series:
+    """Format period-start timestamps as display labels."""
+    if granularity == "Monthly":
+        return ts_series.dt.strftime("%b '%y")   # e.g. "Oct '25"
+    return ts_series.dt.strftime("%-m-%d")        # e.g. "10-27"
+
+df["Week"] = period_start(df["Transaction Date"])
 
 # ── Header ────────────────────────────────────────────────────────────────────
 
@@ -243,7 +258,7 @@ weekly_export = (
 # Weekly labor from ldf
 if not ldf.empty:
     ldf2 = ldf.copy()
-    ldf2["Week"] = week_start(ldf2["Date"])
+    ldf2["Week"] = period_start(ldf2["Date"])
     weekly_labor = (
         ldf2.groupby("Week")
             .agg(
@@ -267,7 +282,7 @@ weekly["Total Cost/Order"]          = (
     + PKG_COST
     + weekly["Avg_Ship"].fillna(0)
 )
-weekly["Week Label"] = weekly["Week"].dt.strftime("%-m-%d")
+weekly["Week Label"] = period_label(weekly["Week"])
 
 # ── KPI cards ─────────────────────────────────────────────────────────────────
 
@@ -455,7 +470,7 @@ if "Transit Time (Days)" in df.columns and "Carrier" in df.columns:
           .mean()
           .reset_index()
     )
-    transit["Week Label"] = transit["Week"].dt.strftime("%-m-%d")
+    transit["Week Label"] = period_label(transit["Week"])
     transit = transit.sort_values("Week")
 
     carriers = sorted(transit["Carrier"].unique())
