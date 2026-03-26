@@ -81,10 +81,11 @@ def _read_tab(svc, tab_name: str) -> pd.DataFrame:
     rows    = [r + [""] * (len(headers) - len(r)) for r in rows]
     df      = pd.DataFrame(rows, columns=headers)
 
-    # Parse Transaction Date
+    # Parse Transaction Date — mixed formats come from Google Sheets auto-formatting:
+    # some rows: '2026-03-24 14:00:59' (ISO with time), others: '3/24/2026' (US date)
     if "Transaction Date" in df.columns:
         df["Transaction Date"] = pd.to_datetime(
-            df["Transaction Date"], errors="coerce", infer_datetime_format=True
+            df["Transaction Date"], errors="coerce", dayfirst=False
         )
         df = df.dropna(subset=["Transaction Date"])
 
