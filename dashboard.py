@@ -706,13 +706,14 @@ else:
             textfont=dict(size=11, color="#c9184a"),
         )
 
-        # "Pre:" label — pinned at y = pre_neg for every week
+        # Pre-neg total shown as hover only — avoids label overlap on dense weeks
         fig_neg.add_scatter(
             x=weekly_cmp["Week Label"],
-            y=pre_neg_col + pre_neg_col * 0.025,
-            mode="text",
-            text=pre_neg_col.map("Pre: ${:,.0f}".format),
-            textfont=dict(size=10, color="#6b7a99", family="monospace"),
+            y=pre_neg_col,
+            mode="markers",
+            marker=dict(size=0, opacity=0),
+            customdata=pre_neg_col.values,
+            hovertemplate="Pre-Neg: $%{customdata:,.0f}<extra></extra>",
             showlegend=False,
         )
 
