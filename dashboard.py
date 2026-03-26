@@ -309,6 +309,7 @@ fig_bar_vol.update_layout(
     uniformtext_minsize=10,
     uniformtext_mode="hide",
 )
+fig_bar_vol.update_xaxes(type="category")   # prevent Plotly auto-parsing M-DD as dates
 st.plotly_chart(fig_bar_vol, use_container_width=True)
 
 # ── Chart 2: Weekly cost summary TABLE ───────────────────────────────────────
@@ -439,6 +440,7 @@ fig_stack.update_layout(
     margin=dict(t=30, b=80, l=10, r=10),
     height=420,
 )
+fig_stack.update_xaxes(type="category")   # prevent Plotly auto-parsing M-DD as dates
 st.plotly_chart(fig_stack, use_container_width=True)
 
 # ── Chart 4: Avg Transit Time by Carrier ─────────────────────────────────────
