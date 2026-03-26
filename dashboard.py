@@ -643,44 +643,59 @@ else:
 
         st.markdown("")
 
-        # ── Stacked bar: Post-Neg (bottom) + Savings (top) = Pre-Neg ────────
-        # Savings can be negative for some carriers; clamp display min to 0
+        # ── Stacked bar: Post-Neg (bottom, blue) + Savings (top, green) = Pre-Neg ──
+        # For overpay weeks (savings < 0): only show the blue bar (no red stacking).
+        # Overpay bars are naturally taller, showing the cost exceeded pre-neg rates.
+        savings_clipped = weekly_cmp["Total_Savings"].clip(lower=0)
+        is_overpay      = weekly_cmp["Total_Savings"] < 0
+
+        # Post-neg bar color: blue normally, red-tint for overpay weeks
+        post_neg_colors = [
+            "#f72585" if ovp else "#4361ee"
+            for ovp in is_overpay
+        ]
+
+        # Text inside post-neg bar: cost + "(over pre-neg)" for overpay weeks
+        post_neg_text = weekly_cmp.apply(
+            lambda r: f"${r['Post_Neg_Total']:,.0f}\n▲ ${abs(r['Total_Savings']):,.0f} over"
+            if r["Total_Savings"] < 0 else f"${r['Post_Neg_Total']:,.0f}",
+            axis=1,
+        )
+
         fig_neg = go.Figure()
 
-        # Bottom stack: post-negotiation cost (blue)
+        # Bottom stack: post-negotiation actual cost
         fig_neg.add_bar(
             x=weekly_cmp["Week Label"],
             y=weekly_cmp["Post_Neg_Total"].round(2),
-            name="Post-Negotiation Cost",
-            marker_color="#4361ee",
-            text=weekly_cmp["Post_Neg_Total"].map("${:,.0f}".format),
+            name="Post-Neg Cost",
+            marker_color=post_neg_colors,
+            text=post_neg_text,
             textposition="inside",
             insidetextanchor="middle",
             textfont=dict(size=11, color="#ffffff"),
         )
 
-        # Top stack: savings (green when positive, red when negative)
-        savings_colors = [
-            "#43a878" if v >= 0 else "#f72585"
-            for v in weekly_cmp["Total_Savings"]
-        ]
+        # Top stack: savings (green, 0 for overpay weeks → invisible)
+        savings_text = savings_clipped.map(
+            lambda v: f"+${v:,.0f}" if v > 0 else ""
+        )
         fig_neg.add_bar(
             x=weekly_cmp["Week Label"],
-            y=weekly_cmp["Total_Savings"].round(2),
+            y=savings_clipped.round(2),
             name="Savings vs Pre-Neg",
-            marker_color=savings_colors,
-            text=weekly_cmp["Total_Savings"].map(
-                lambda v: f"+${v:,.0f}" if v >= 0 else f"-${abs(v):,.0f}"
-            ),
+            marker_color="#43a878",
+            text=savings_text,
             textposition="inside",
             insidetextanchor="middle",
             textfont=dict(size=11, color="#ffffff"),
         )
 
-        # Pre-neg total label floating above each bar
+        # "Pre:" label: always floats just above the top of each bar
+        bar_top = weekly_cmp["Post_Neg_Total"] + savings_clipped
         fig_neg.add_scatter(
             x=weekly_cmp["Week Label"],
-            y=(weekly_cmp["Post_Neg_Total"] + weekly_cmp["Total_Savings"].clip(lower=0) + 200),
+            y=bar_top + bar_top * 0.025,
             mode="text",
             text=weekly_cmp["Pre_Neg_Total"].map("Pre: ${:,.0f}".format),
             textfont=dict(size=10, color="#6b7a99", family="monospace"),
