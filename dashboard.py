@@ -644,44 +644,26 @@ else:
         st.markdown("")
 
         # ── Stacked bar ───────────────────────────────────────────────────────
-        # Three traces stacked:
-        #   1. Blue  — post-neg cost for normal weeks (savings ≥ 0)
-        #   2. Pink  — post-neg cost for overpay weeks (savings < 0)
-        #   3. Green — savings on top of blue (0 for overpay weeks → hidden)
-        # Each week shows exactly ONE of blue/pink, so legends are unambiguous.
+        # Always blue (post-neg cost) + green on top (savings, clipped to 0).
+        # Overpay weeks just appear as taller blue bars with a red annotation.
         savings_clipped = weekly_cmp["Total_Savings"].clip(lower=0)
         is_overpay      = weekly_cmp["Total_Savings"] < 0
 
-        normal_y  = weekly_cmp["Post_Neg_Total"].where(~is_overpay, 0).round(2)
-        overpay_y = weekly_cmp["Post_Neg_Total"].where( is_overpay, 0).round(2)
-
         fig_neg = go.Figure()
 
-        # Trace 1: normal weeks (blue)
+        # Blue bar — post-neg actual cost (all weeks)
         fig_neg.add_bar(
             x=weekly_cmp["Week Label"],
-            y=normal_y,
+            y=weekly_cmp["Post_Neg_Total"].round(2),
             name="Post-Neg Cost",
             marker_color="#4361ee",
-            text=normal_y.map(lambda v: f"${v:,.0f}" if v > 0 else ""),
+            text=weekly_cmp["Post_Neg_Total"].map("${:,.0f}".format),
             textposition="inside",
             insidetextanchor="middle",
             textfont=dict(size=11, color="#ffffff"),
         )
 
-        # Trace 2: overpay weeks (pink)
-        fig_neg.add_bar(
-            x=weekly_cmp["Week Label"],
-            y=overpay_y,
-            name="Over Pre-Neg Rates",
-            marker_color="#f72585",
-            text=overpay_y.map(lambda v: f"${v:,.0f}" if v > 0 else ""),
-            textposition="inside",
-            insidetextanchor="middle",
-            textfont=dict(size=11, color="#ffffff"),
-        )
-
-        # Trace 3: savings (green, only visible on normal weeks)
+        # Green bar — savings on top (0 for overpay weeks → invisible)
         fig_neg.add_bar(
             x=weekly_cmp["Week Label"],
             y=savings_clipped.round(2),
@@ -693,8 +675,8 @@ else:
             textfont=dict(size=11, color="#ffffff"),
         )
 
-        # "Pre:" label floats just above each bar's top
-        bar_top = (normal_y + overpay_y + savings_clipped)
+        # "Pre:" label above every bar
+        bar_top = weekly_cmp["Post_Neg_Total"] + savings_clipped
         fig_neg.add_scatter(
             x=weekly_cmp["Week Label"],
             y=bar_top + bar_top * 0.025,
@@ -703,6 +685,19 @@ else:
             textfont=dict(size=10, color="#6b7a99", family="monospace"),
             showlegend=False,
         )
+
+        # Red annotation for overpay weeks — small text just above the bar
+        overpay_rows = weekly_cmp[is_overpay]
+        if not overpay_rows.empty:
+            overpay_bar_top = overpay_rows["Post_Neg_Total"] + overpay_rows["Total_Savings"].clip(lower=0)
+            fig_neg.add_scatter(
+                x=overpay_rows["Week Label"],
+                y=overpay_bar_top * 0.5,
+                mode="text",
+                text=overpay_rows["Total_Savings"].map(lambda v: f"−${abs(v):,.0f} vs pre-neg"),
+                textfont=dict(size=10, color="#f72585"),
+                showlegend=False,
+            )
 
         fig_neg.update_layout(
             **PLOTLY_THEME,
