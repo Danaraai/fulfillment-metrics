@@ -262,23 +262,24 @@ def automate_chrome_export(report_url: str, export_date: date) -> bool:
 
 def wait_for_csv(timeout_minutes: int = 10):
     """
-    Polls ~/Downloads every 3 seconds for a new data.csv.
-    Ignores files older than 2 minutes at the start of polling.
+    Polls ~/Downloads every 3 seconds for a new data.csv OR data.xlsx.
+    Power BI now exports as .xlsx (no longer offers CSV option).
     Returns Path on success, None on timeout.
     """
     deadline   = time.time() + timeout_minutes * 60
     start_time = time.time()
 
-    print(f"\nWaiting up to {timeout_minutes} min for data.csv in ~/Downloads …")
+    print(f"\nWaiting up to {timeout_minutes} min for data.csv/xlsx in ~/Downloads …")
     spinner = ["|", "/", "-", "\\"]
     i = 0
 
     while time.time() < deadline:
-        for f in DOWNLOADS.glob("data*.csv"):
-            age = time.time() - f.stat().st_mtime
-            if age < (time.time() - start_time) + 5:   # file appeared after we started
-                print(f"\n  ✓ Download detected: {f.name}")
-                return f
+        for pattern in ("data*.csv", "data*.xlsx"):
+            for f in DOWNLOADS.glob(pattern):
+                age = time.time() - f.stat().st_mtime
+                if age < (time.time() - start_time) + 5:
+                    print(f"\n  ✓ Download detected: {f.name}")
+                    return f
         elapsed = int(time.time() - start_time)
         print(f"  {spinner[i % 4]}  Waiting… {elapsed}s elapsed", end="\r")
         i += 1
@@ -349,8 +350,14 @@ def upload_to_sheets(csv_path: Path, config: dict, export_date: date, dry_run=Fa
     dedup_col = config["google_sheets"].get("dedup_column", "Order ID")
     wlabel    = fmt_s(export_date)
 
-    # Read CSV
-    df = pd.read_csv(csv_path, encoding="utf-8-sig")
+    # Read CSV or XLSX (Power BI switched to xlsx-only export)
+    if csv_path.suffix.lower() in (".xlsx", ".xls"):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            df = pd.read_excel(csv_path)
+    else:
+        df = pd.read_csv(csv_path, encoding="utf-8-sig")
     print(f"  CSV loaded: {len(df):,} rows × {len(df.columns)} columns")
 
     # Add week label column
@@ -513,9 +520,12 @@ def main():
 
     # ── Step 1: Get the CSV ────────────────────────────────────────────────────
     if args.upload_only:
-        candidates = sorted(DOWNLOADS.glob("data*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+        candidates = sorted(
+            list(DOWNLOADS.glob("data*.csv")) + list(DOWNLOADS.glob("data*.xlsx")),
+            key=lambda p: p.stat().st_mtime, reverse=True
+        )
         if not candidates:
-            print("\nNo data.csv in ~/Downloads. Export from Power BI first.")
+            print("\nNo data.csv/xlsx in ~/Downloads. Export from Power BI first.")
             sys.exit(1)
         csv_path = candidates[0]
         print(f"\nUsing: {csv_path.name}  ({csv_path.stat().st_size // 1024} KB)")
