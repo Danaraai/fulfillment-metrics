@@ -169,27 +169,47 @@ def automate_chrome_export(report_url: str, export_date: date) -> bool:
     print(f"  Date JS: {set_result}")
     time.sleep(3)   # Let data reload with new date range
 
-    # 5 — Hover over the table visual to reveal the ··· More Options button, then click it
+    # 5 — Click the ··· More Options button on the table visual
     print("  Clicking More Options (···)...")
-    # Hover over the last visual container (the data table is always last)
+    # First try: hover to reveal, then click
     _run_js("""
 (function() {
     var hosts = document.querySelectorAll('.visualContainerHost');
     if (!hosts.length) return 'no hosts';
     var tbl = hosts[hosts.length - 1];
-    tbl.dispatchEvent(new MouseEvent('mouseover',   {bubbles: true}));
-    tbl.dispatchEvent(new MouseEvent('mouseenter',  {bubbles: true}));
+    ['mouseover','mouseenter','mousemove'].forEach(function(t) {
+        tbl.dispatchEvent(new MouseEvent(t, {bubbles:true, cancelable:true, view:window}));
+    });
     return 'hovered ' + hosts.length + ' visuals';
 })()
 """)
-    time.sleep(1)   # give hover a moment to reveal the header buttons
+    time.sleep(3)   # longer wait — PBI header animation takes ~1-2s
     click_result = _run_js("""
 (function() {
-    // 'More options' buttons appear in visual headers on hover
+    // Try visible buttons first
     var btns = Array.from(document.querySelectorAll('button[title="More options"]'));
-    if (!btns.length) return 'not found';
-    btns[btns.length - 1].click();   // last one = table visual
-    return 'clicked (' + btns.length + ' found)';
+    if (btns.length) { btns[btns.length-1].click(); return 'clicked visible: ' + btns.length; }
+
+    // Force-show hidden visual header buttons (bypass CSS opacity/visibility)
+    document.querySelectorAll('[class*="visualHeader"], [class*="visual-header"], [class*="headerContainer"]')
+        .forEach(function(h) {
+            h.style.visibility = 'visible';
+            h.style.opacity = '1';
+            h.style.pointerEvents = 'auto';
+        });
+
+    // Try again after forcing visibility
+    btns = Array.from(document.querySelectorAll('button[title="More options"]'));
+    if (btns.length) { btns[btns.length-1].click(); return 'clicked forced: ' + btns.length; }
+
+    // Last resort: find any button with ellipsis icon inside visual containers
+    var hosts = document.querySelectorAll('.visualContainerHost');
+    if (hosts.length) {
+        var lastHost = hosts[hosts.length-1];
+        var allBtns = Array.from(lastHost.querySelectorAll('button'));
+        if (allBtns.length) { allBtns[allBtns.length-1].click(); return 'clicked last btn in visual: ' + allBtns.length; }
+    }
+    return 'not found';
 })()
 """)
     print(f"  More options result: {click_result}")

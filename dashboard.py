@@ -18,7 +18,7 @@ from data_loader import load_export, load_labor_hours, load_daily_metrics, load_
 # ── Page config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="OpenStore Operations",
+    page_title="FC1 Metrics",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -107,7 +107,7 @@ if export_df.empty:
 
 # ── Sidebar filters ───────────────────────────────────────────────────────────
 
-st.sidebar.title("📦 OpenStore Ops")
+st.sidebar.title("📦 FC1 Metrics")
 st.sidebar.markdown("---")
 
 min_date = export_df["Transaction Date"].min().date()
