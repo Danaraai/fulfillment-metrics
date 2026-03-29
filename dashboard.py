@@ -605,7 +605,106 @@ if pd.notna(avg_oplh) and avg_oplh > 0 and pd.notna(avg_labor_cost):
 else:
     st.caption(f"📊 {len(show):,} days  ·  Labor hours data not available for this range")
 
-# ── Chart 6: Pre vs Post Negotiation Shipping Cost (Stacked Weekly Bar) ────────
+# ── Monthly Performance Table ─────────────────────────────────────────────────
+
+st.markdown('<div class="section-header">Monthly Performance Summary</div>',
+            unsafe_allow_html=True)
+
+# Build month-level aggregation from full (unfiltered) export + labor data
+export_all = export_df.copy()
+export_all["Month"] = export_all["Transaction Date"].dt.to_period("M").dt.to_timestamp()
+
+monthly_orders = (
+    export_all.groupby("Month")
+              .agg(
+                  Total_Orders =("OrderID",         "count"),
+                  Total_Ship   =("Original Invoice", "sum"),
+              )
+              .reset_index()
+)
+
+if not labor_df.empty:
+    labor_all = labor_df.copy()
+    labor_all["Month"] = labor_all["Date"].dt.to_period("M").dt.to_timestamp()
+    monthly_labor = (
+        labor_all.groupby("Month")
+                 .agg(Total_Hours=("Total Hours", "sum"))
+                 .reset_index()
+    )
+    monthly_perf = monthly_orders.merge(monthly_labor, on="Month", how="left")
+else:
+    monthly_perf = monthly_orders.copy()
+    monthly_perf["Total_Hours"] = float("nan")
+
+monthly_perf["Labor_Rate"]        = LABOR_RATE
+monthly_perf["Pkg_Per_Order"]     = PKG_COST
+monthly_perf["Total_Pkg_Cost"]    = monthly_perf["Total_Orders"] * PKG_COST
+monthly_perf["Total_Labor_Cost"]  = monthly_perf["Total_Hours"] * LABOR_RATE
+monthly_perf["Total_Fulfillment"] = (
+    monthly_perf["Total_Labor_Cost"].fillna(0)
+    + monthly_perf["Total_Pkg_Cost"]
+    + monthly_perf["Total_Ship"].fillna(0)
+)
+
+# Grand total row
+grand_m = {
+    "Month":             "Grand Total",
+    "Total_Orders":      monthly_perf["Total_Orders"].sum(),
+    "Labor_Rate":        LABOR_RATE,
+    "Total_Hours":       monthly_perf["Total_Hours"].sum(),
+    "Pkg_Per_Order":     PKG_COST,
+    "Total_Pkg_Cost":    monthly_perf["Total_Pkg_Cost"].sum(),
+    "Total_Labor_Cost":  monthly_perf["Total_Labor_Cost"].sum(),
+    "Total_Ship":        monthly_perf["Total_Ship"].sum(),
+    "Total_Fulfillment": monthly_perf["Total_Fulfillment"].sum(),
+}
+monthly_display = pd.concat([monthly_perf, pd.DataFrame([grand_m])], ignore_index=True)
+
+# Format month column
+def _fmt_month(v):
+    if isinstance(v, str):
+        return v
+    try:
+        return pd.Timestamp(v).strftime("%-m/1/%Y")
+    except Exception:
+        return str(v)
+
+monthly_display["Month"] = monthly_display["Month"].apply(_fmt_month)
+
+def _style_grand_m(row):
+    if row["Month"] == "Grand Total":
+        return ["font-weight: bold; background-color: #f0f4ff"] * len(row)
+    return [""] * len(row)
+
+st.dataframe(
+    monthly_display.rename(columns={
+        "Month":             "Month",
+        "Total_Orders":      "Total Orders",
+        "Labor_Rate":        "Labor Cost / Hr",
+        "Total_Hours":       "Total Labor Hours",
+        "Pkg_Per_Order":     "Pkg Cost / Order",
+        "Total_Pkg_Cost":    "Total Pkg Cost",
+        "Total_Labor_Cost":  "Total Labor Cost",
+        "Total_Ship":        "Shipping Cost w/ Surcharges",
+        "Total_Fulfillment": "Total Fulfillment Cost",
+    }).style
+      .format({
+          "Total Orders":               "{:,.0f}",
+          "Labor Cost / Hr":            "${:.2f}",
+          "Total Labor Hours":          "{:,.2f}",
+          "Pkg Cost / Order":           "${:.2f}",
+          "Total Pkg Cost":             "${:,.2f}",
+          "Total Labor Cost":           "${:,.2f}",
+          "Shipping Cost w/ Surcharges":"${:,.2f}",
+          "Total Fulfillment Cost":     "${:,.2f}",
+      }, na_rep="—")
+      .apply(_style_grand_m, axis=1),
+    use_container_width=True,
+    hide_index=True,
+    height=min(600, (len(monthly_display) + 1) * 38 + 40),
+)
+
+# ── Chart 6: Pre vs Post Negotiation Shipping Cost ────────────────────────────
 
 st.markdown('<div class="section-header">Shipping Cost: Pre vs Post Negotiation</div>',
             unsafe_allow_html=True)
@@ -628,11 +727,11 @@ else:
     if cmp.empty:
         st.info("No comparison data available for the selected date range.")
     else:
-        # Week aggregation (Monday-anchored, same as rest of dashboard)
-        cmp["Week"] = week_start(cmp["Transaction Date"])
+        # Use same period grouping as the rest of the dashboard (weekly or monthly)
+        cmp["Period"] = period_start(cmp["Transaction Date"])
 
         weekly_cmp = (
-            cmp.groupby("Week")
+            cmp.groupby("Period")
                .agg(
                    Shipments        =("OrderID",              "count"),
                    Pre_Neg_Total    =("Pre_Neg_Total_Rate",   "sum"),
@@ -640,9 +739,9 @@ else:
                    Total_Savings    =("Savings_Per_Shipment", "sum"),
                )
                .reset_index()
-               .sort_values("Week")
+               .sort_values("Period")
         )
-        weekly_cmp["Week Label"] = weekly_cmp["Week"].dt.strftime("%-m-%d")
+        weekly_cmp["Week Label"] = period_label(weekly_cmp["Period"])
 
         # ── KPI summary row ──────────────────────────────────────────────────
         total_pre  = cmp["Pre_Neg_Total_Rate"].sum()
@@ -677,9 +776,9 @@ else:
         #    → savings weeks: floats just above the bar top  (pre_neg = bar top)
         #    → overpay weeks: sits at the blue/red boundary  (marks the threshold)
 
-        post_neg_col = weekly_cmp["Post_Neg_Total"]
-        pre_neg_col  = weekly_cmp["Pre_Neg_Total"]
-        savings_raw  = weekly_cmp["Total_Savings"]
+        post_neg_col = weekly_cmp["Post_Neg_Total"].reset_index(drop=True)
+        pre_neg_col  = weekly_cmp["Pre_Neg_Total"].reset_index(drop=True)
+        savings_raw  = weekly_cmp["Total_Savings"].reset_index(drop=True)
 
         base_seg    = post_neg_col.clip(upper=pre_neg_col).round(2)   # ① blue
         savings_seg = savings_raw.clip(lower=0).round(2)              # ② green
@@ -745,10 +844,11 @@ else:
             for i, (_, row) in enumerate(weekly_cmp.iterrows())
         ]
 
+        xaxis_title_neg = "Month" if granularity == "Monthly" else "Week (Monday)"
         fig_neg.update_layout(
             **PLOTLY_THEME,
             barmode="stack",
-            xaxis_title="Week (Monday)",
+            xaxis_title=xaxis_title_neg,
             yaxis_title="Total Shipping Cost ($)",
             yaxis_tickprefix="$",
             yaxis_tickformat=",",
