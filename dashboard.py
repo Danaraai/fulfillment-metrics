@@ -13,7 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, date
 
-from data_loader import load_export, load_labor_hours, load_daily_metrics, load_comparison, _comparison_load_error
+from data_loader import load_export, load_labor_hours, load_comparison, _comparison_load_error
 
 # ── Page config ───────────────────────────────────────────────────────────────
 
@@ -95,10 +95,10 @@ PKG_CUTOVER  = pd.Timestamp("2026-03-19")
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_data():
-    return load_export(), load_labor_hours(), load_daily_metrics()
+    return load_export(), load_labor_hours()
 
 with st.spinner("Loading data from Google Sheets…"):
-    export_df, labor_df, metrics_df = get_data()
+    export_df, labor_df = get_data()
 
 with st.spinner("Loading negotiation comparison data…"):
     comparison_df = load_comparison()
@@ -647,7 +647,7 @@ if pd.notna(avg_oplh) and avg_oplh > 0 and pd.notna(avg_labor_cost):
         f"Avg OPLH: **{avg_oplh:.1f}**  ·  "
         f"Avg Labor Cost/Order: **${avg_labor_cost:.2f}**  ·  "
         f"Labor rate: **${LABOR_RATE}/hr**  ·  "
-        f"Pkg rate: **${PKG_COST}/order**"
+        f"Pkg rate: **${PKG_COST_NEW}/order** (from 3/19) / **${PKG_COST}/order** (before)"
     )
 else:
     st.caption(f"📊 {len(show):,} days  ·  Labor hours data not available for this range")
