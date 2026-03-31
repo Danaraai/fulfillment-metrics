@@ -87,7 +87,9 @@ CARRIER_COLORS = {
 FALLBACK_COLORS = ["#4361ee", "#f72585", "#4cc9f0", "#f8961e", "#7209b7", "#3a86ff"]
 
 LABOR_RATE   = 18.25   # $/hr
-PKG_COST     = 0.31    # $/order (fixed)
+PKG_COST     = 0.31    # $/order before 2026-03-19
+PKG_COST_NEW = 0.28    # $/order from 2026-03-19 onwards
+PKG_CUTOVER  = pd.Timestamp("2026-03-19")
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 
@@ -135,6 +137,11 @@ mask = (
     (export_df["Transaction Date"].dt.date <= end_date)
 )
 df = export_df[mask].copy()
+
+# Per-order packaging cost (rate changed 2026-03-19)
+df["Pkg Cost"] = df["Transaction Date"].apply(
+    lambda d: PKG_COST_NEW if d >= PKG_CUTOVER else PKG_COST
+)
 
 # True shipping cost = sum of all individual cost components
 # (Original Invoice omits WMS Fuel Surcharge, Delivery Area Surcharge, Insurance, etc.)
@@ -244,11 +251,22 @@ daily_tbl["Outbound Labor Cost/Order"] = (
 ).where(daily_tbl["Daily Orders"] > 0)
 
 daily_tbl["Avg Shipping Cost/Order"] = daily_tbl["Avg_Ship_Cost"]
-daily_tbl["Pkg Cost/Order"] = PKG_COST
+
+# Daily packaging cost — rate changed 2026-03-19
+pkg_daily = (
+    df.assign(_day=df["Transaction Date"].dt.date)
+      .groupby("_day")["Pkg Cost"]
+      .mean()
+      .reset_index()
+      .rename(columns={"_day": "Date", "Pkg Cost": "Pkg Cost/Order"})
+)
+pkg_daily["Date"] = pd.to_datetime(pkg_daily["Date"])
+daily_tbl = daily_tbl.merge(pkg_daily, on="Date", how="left")
+daily_tbl["Pkg Cost/Order"] = daily_tbl["Pkg Cost/Order"].fillna(PKG_COST)
 
 daily_tbl["Total Cost/Order"] = (
     daily_tbl["Total Labor Cost/Order"].fillna(0)
-    + PKG_COST
+    + daily_tbl["Pkg Cost/Order"]
     + daily_tbl["Avg Shipping Cost/Order"].fillna(0)
 )
 
@@ -260,6 +278,7 @@ weekly_export = (
       .agg(
           Orders=("Transaction Date", "count"),
           Avg_Ship=("Total Ship Cost", "mean"),
+          Avg_Pkg=("Pkg Cost", "mean"),
       )
       .reset_index()
 )
@@ -285,10 +304,10 @@ else:
 weekly["OPLH"] = (weekly["Orders"] / weekly["Total_Hours"]).where(weekly["Total_Hours"].fillna(0) > 0)
 weekly["Total Labor Cost/Order"]    = (weekly["Total_Hours"]    * LABOR_RATE / weekly["Orders"]).where(weekly["Orders"] > 0)
 weekly["Outbound Labor Cost/Order"] = (weekly["Outbound_Hours"] * LABOR_RATE / weekly["Orders"]).where(weekly["Orders"] > 0)
-weekly["Pkg Cost/Order"]            = PKG_COST
+weekly["Pkg Cost/Order"]            = weekly["Avg_Pkg"].fillna(PKG_COST)
 weekly["Total Cost/Order"]          = (
     weekly["Total Labor Cost/Order"].fillna(0)
-    + PKG_COST
+    + weekly["Pkg Cost/Order"]
     + weekly["Avg_Ship"].fillna(0)
 )
 weekly["Week Label"] = period_label(weekly["Week"])
@@ -303,8 +322,9 @@ _total_ord_lbr = daily_tbl.loc[_has_labor, "Daily Orders"].sum()
 avg_oplh       = (_total_ord_lbr / _total_hrs)              if _total_hrs > 0     else float("nan")
 avg_labor_cost = (_total_hrs * LABOR_RATE / _total_ord_lbr) if _total_ord_lbr > 0 else float("nan")
 
+avg_pkg_cost   = df["Pkg Cost"].mean() if "Pkg Cost" in df.columns else PKG_COST
 avg_total_cost = (
-    (avg_labor_cost or 0) + PKG_COST + (avg_ship_cost or 0)
+    (avg_labor_cost or 0) + avg_pkg_cost + (avg_ship_cost or 0)
 ) if pd.notna(avg_labor_cost) and pd.notna(avg_ship_cost) else None
 
 k1, k2, k3, k4, k5 = st.columns(5)
@@ -368,6 +388,7 @@ _w_orders   = weekly["Orders"].sum()
 _w_tot_hrs  = weekly["Total_Hours"].fillna(0).sum()
 _w_out_hrs  = weekly["Outbound_Hours"].fillna(0).sum()
 _w_avg_ship = tbl["Avg Shipping Cost w/ Surcharges"].mean()   # avg of weekly avgs is appropriate here
+_w_avg_pkg  = df["Pkg Cost"].mean() if "Pkg Cost" in df.columns else PKG_COST
 _w_tot_lbr  = (_w_tot_hrs * LABOR_RATE / _w_orders) if _w_orders > 0 else float("nan")
 _w_out_lbr  = (_w_out_hrs * LABOR_RATE / _w_orders) if _w_orders > 0 else float("nan")
 _w_oplh     = (_w_orders / _w_tot_hrs)              if _w_tot_hrs > 0 else float("nan")
@@ -375,10 +396,10 @@ grand = {
     "Week": "Grand Total",
     "Avg OPLH":                          _w_oplh,
     "Total Labor Cost/Order":            _w_tot_lbr,
-    "Packaging Cost/Order":              PKG_COST,
+    "Packaging Cost/Order":              _w_avg_pkg,
     "Outbound Labor Cost/Order":         _w_out_lbr,
     "Avg Shipping Cost w/ Surcharges":   _w_avg_ship,
-    "Cost per Order (Pick, Pack, Ship)": ((_w_tot_lbr or 0) + PKG_COST + (_w_avg_ship or 0)),
+    "Cost per Order (Pick, Pack, Ship)": ((_w_tot_lbr or 0) + _w_avg_pkg + (_w_avg_ship or 0)),
 }
 tbl_display = pd.concat([tbl, pd.DataFrame([grand])], ignore_index=True)
 
@@ -639,6 +660,9 @@ st.markdown('<div class="section-header">Monthly Performance Summary</div>',
 # Build month-level aggregation from full (unfiltered) export + labor data
 export_all = export_df.copy()
 export_all["Total Ship Cost"] = sum(export_all[c] for c in _SHIP_COLS if c in export_all.columns)
+export_all["Pkg Cost"] = export_all["Transaction Date"].apply(
+    lambda d: PKG_COST_NEW if d >= PKG_CUTOVER else PKG_COST
+)
 export_all["Month"] = export_all["Transaction Date"].dt.to_period("M").dt.to_timestamp()
 
 monthly_orders = (
@@ -646,6 +670,7 @@ monthly_orders = (
               .agg(
                   Total_Orders =("OrderID",          "count"),
                   Total_Ship   =("Total Ship Cost",  "sum"),
+                  Total_Pkg    =("Pkg Cost",         "sum"),
               )
               .reset_index()
 )
@@ -664,8 +689,8 @@ else:
     monthly_perf["Total_Hours"] = float("nan")
 
 monthly_perf["Labor_Rate"]        = LABOR_RATE
-monthly_perf["Pkg_Per_Order"]     = PKG_COST
-monthly_perf["Total_Pkg_Cost"]    = monthly_perf["Total_Orders"] * PKG_COST
+monthly_perf["Total_Pkg_Cost"]    = monthly_perf["Total_Pkg"]
+monthly_perf["Pkg_Per_Order"]     = monthly_perf["Total_Pkg_Cost"] / monthly_perf["Total_Orders"]
 monthly_perf["Total_Labor_Cost"]  = monthly_perf["Total_Hours"] * LABOR_RATE
 monthly_perf["Total_Fulfillment"] = (
     monthly_perf["Total_Labor_Cost"].fillna(0)
