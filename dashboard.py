@@ -303,7 +303,11 @@ _total_ord_lbr = daily_tbl.loc[_has_labor, "Daily Orders"].sum()
 avg_oplh       = (_total_ord_lbr / _total_hrs)              if _total_hrs > 0     else float("nan")
 avg_labor_cost = (_total_hrs * LABOR_RATE / _total_ord_lbr) if _total_ord_lbr > 0 else float("nan")
 
-k1, k2, k3, k4 = st.columns(4)
+avg_total_cost = (
+    (avg_labor_cost or 0) + PKG_COST + (avg_ship_cost or 0)
+) if pd.notna(avg_labor_cost) and pd.notna(avg_ship_cost) else None
+
+k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Total Shipments", f"{total_orders:,}")
 k2.metric("Avg Shipping Cost / Order",
           f"${avg_ship_cost:.2f}" if pd.notna(avg_ship_cost) and avg_ship_cost != 0 else "—")
@@ -312,6 +316,9 @@ k3.metric("Avg OPLH (Total Hours)",
           help="Orders Per Total Labor Hour")
 k4.metric("Avg Labor Cost / Order",
           f"${avg_labor_cost:.2f}" if pd.notna(avg_labor_cost) else "—")
+k5.metric("Avg Total Cost / Order",
+          f"${avg_total_cost:.2f}" if avg_total_cost is not None else "—",
+          help="Labor + Packaging + Shipping")
 
 # ── Chart 1: Weekly shipments bar ─────────────────────────────────────────────
 
