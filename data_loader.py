@@ -171,8 +171,7 @@ def load_labor_hours() -> pd.DataFrame:
 
         # Column A is always the date regardless of header name ("Date", "Week", etc.)
         date_col = frame.columns[0]
-        frame[date_col] = pd.to_datetime(frame[date_col], errors="coerce",
-                                         infer_datetime_format=True)
+        frame[date_col] = pd.to_datetime(frame[date_col], errors="coerce")
         frame = frame.dropna(subset=[date_col])
         frame = frame.rename(columns={date_col: "Date"})
         frame["Date"] = pd.to_datetime(frame["Date"])
@@ -235,7 +234,7 @@ def load_daily_metrics() -> pd.DataFrame:
         if not s or s.lower() in ("nan", "none", ""):
             return pd.NaT
         # Try standard datetime parsing first
-        parsed = pd.to_datetime(s, errors="coerce", infer_datetime_format=True)
+        parsed = pd.to_datetime(s, errors="coerce")
         if pd.notna(parsed):
             return parsed
         # Fallback: Google Sheets serial number (days since 1899-12-30)
