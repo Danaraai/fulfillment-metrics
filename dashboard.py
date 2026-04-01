@@ -942,7 +942,7 @@ else:
                         "Avg Savings / Shipment":"${:.2f}",
                         "% Saved":               "{:.1f}%",
                         "Shipments":             "{:,}",
-                    }).applymap(
+                    }).map(
                         lambda v: "color: #43a878; font-weight:600" if isinstance(v, (int, float)) and v > 0
                                   else ("color: #f72585; font-weight:600" if isinstance(v, (int, float)) and v < 0 else ""),
                         subset=["Savings", "Avg Savings / Shipment"]
