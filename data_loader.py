@@ -127,12 +127,15 @@ def load_export() -> pd.DataFrame:
 
     combined = pd.concat([old_df, new_df], ignore_index=True)
 
-    # Deduplicate on OrderID + Transaction Date (keep last = newest export wins)
+    # Deduplicate on OrderID — keep the record with the EARLIEST Transaction Date
+    # (Old shipments has the original invoice date; Export tab may re-export the same
+    #  order later with a newer date once invoicing is finalized, which would wrongly
+    #  shift it to a later month)
     if "OrderID" in combined.columns and "Transaction Date" in combined.columns:
         combined = (
             combined
             .sort_values("Transaction Date")
-            .drop_duplicates(subset=["OrderID"], keep="last")
+            .drop_duplicates(subset=["OrderID"], keep="first")
             .reset_index(drop=True)
         )
 
