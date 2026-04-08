@@ -117,19 +117,10 @@ max_date = export_df["Transaction Date"].max().date()
 
 default_start = max(min_date, datetime.now().date().replace(month=1, day=1))
 
-date_range = st.sidebar.date_input(
-    "Date range",
-    value=(default_start, max_date),
-    min_value=date(2024, 1, 1),
-    max_value=max_date,
-)
+start_date = default_start
+end_date   = datetime.now().date()
 
-if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-    start_date, end_date = date_range
-else:
-    start_date, end_date = default_start, max_date
-
-granularity = st.sidebar.selectbox("Chart granularity", ["Weekly", "Monthly"], index=0)
+granularity = "Weekly"
 
 # Apply date filter to export
 mask = (
@@ -312,7 +303,7 @@ weekly["Total Cost/Order"]          = (
 )
 weekly["Week Label"] = period_label(weekly["Week"])
 
-_tab_main, _tab_monthly = st.tabs(["📦 Dashboard", "📅 Monthly Summary"])
+_tab_main, _tab_monthly = st.tabs(["📦 Weekly Dashboard", "📅 Monthly Dashboard"])
 _tab_main.__enter__()
 
 # ── KPI cards ─────────────────────────────────────────────────────────────────
