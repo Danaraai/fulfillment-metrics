@@ -312,6 +312,9 @@ weekly["Total Cost/Order"]          = (
 )
 weekly["Week Label"] = period_label(weekly["Week"])
 
+_tab_main, _tab_monthly = st.tabs(["📦 Dashboard", "📅 Monthly Summary"])
+_tab_main.__enter__()
+
 # ── KPI cards ─────────────────────────────────────────────────────────────────
 
 total_orders  = len(df)
@@ -652,7 +655,11 @@ if pd.notna(avg_oplh) and avg_oplh > 0 and pd.notna(avg_labor_cost):
 else:
     st.caption(f"📊 {len(show):,} days  ·  Labor hours data not available for this range")
 
+_tab_main.__exit__(None, None, None)
+
 # ── Monthly Performance Table ─────────────────────────────────────────────────
+
+_tab_monthly.__enter__()
 
 st.markdown('<div class="section-header">Monthly Performance Summary</div>',
             unsafe_allow_html=True)
@@ -755,6 +762,8 @@ st.dataframe(
     hide_index=True,
     height=min(600, (len(monthly_display) + 1) * 38 + 40),
 )
+
+_tab_monthly.__exit__(None, None, None)
 
 # ── Chart 6: Pre vs Post Negotiation Shipping Cost ────────────────────────────
 
