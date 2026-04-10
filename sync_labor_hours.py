@@ -67,7 +67,7 @@ def parse_hms(s: str) -> float:
 
 # ── Read source sheet ──────────────────────────────────────────────────────────
 def read_source_labor_hours(svc, labor_sheet_id: str) -> list[dict]:
-    """Read all daily tabs from the source sheet. Returns list of row dicts."""
+    """Read all daily tabs from the source sheet using a single batch request."""
     meta     = svc.spreadsheets().get(spreadsheetId=labor_sheet_id).execute()
     all_tabs = [s["properties"]["title"] for s in meta["sheets"]]
 
@@ -77,7 +77,8 @@ def read_source_labor_hours(svc, labor_sheet_id: str) -> list[dict]:
     for i, name in enumerate(calendar.month_abbr):
         if name: month_map[name.lower()] = i
 
-    rows = []
+    # Identify valid daily tabs and their dates
+    valid_tabs = []
     for tab in all_tabs:
         parts = tab.strip().split()
         if len(parts) != 2:
@@ -87,28 +88,30 @@ def read_source_labor_hours(svc, labor_sheet_id: str) -> list[dict]:
             continue
         try:
             day = int(parts[1])
-        except ValueError:
-            continue
-
-        year = 2026  # Labor Hours 2026 sheet
-        try:
-            tab_date = date(year=year, month=month_num, day=day)
+            tab_date = date(year=2026, month=month_num, day=day)
+            valid_tabs.append((tab, tab_date))
         except Exception:
             continue
 
-        try:
-            res  = svc.spreadsheets().values().get(
-                spreadsheetId=labor_sheet_id,
-                range=f"'{tab}'!O1:P12"
-            ).execute()
-            vals = res.get("values", [])
-        except Exception:
-            continue
+    # Batch read all tabs in chunks of 50 to avoid quota limits
+    CHUNK = 50
+    tab_data = {}
+    for chunk_start in range(0, len(valid_tabs), CHUNK):
+        chunk = valid_tabs[chunk_start:chunk_start + CHUNK]
+        ranges = [f"'{tab}'!O1:P12" for tab, _ in chunk]
+        resp = svc.spreadsheets().values().batchGet(
+            spreadsheetId=labor_sheet_id,
+            ranges=ranges
+        ).execute()
+        for (tab, _), vr in zip(chunk, resp.get("valueRanges", [])):
+            tab_data[tab] = vr.get("values", [])
 
+    rows = []
+    for tab, tab_date in valid_tabs:
+        vals    = tab_data.get(tab, [])
         summary = {r[0]: r[1] for r in vals if len(r) >= 2}
-
         rows.append({
-            "Date":           str(tab_date),          # "2026-03-23"
+            "Date":           str(tab_date),
             "Total Hours":    round(parse_hms(summary.get("Total Labor Hours",
                               summary.get("Total Emp/Temp Hours", "0"))), 4),
             "Emp Hours":      round(parse_hms(summary.get("Total Emp Hours",  "0")), 4),

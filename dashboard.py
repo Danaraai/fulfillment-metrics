@@ -117,8 +117,13 @@ max_date = export_df["Transaction Date"].max().date()
 
 default_start = max(min_date, datetime.now().date().replace(month=1, day=1))
 
-start_date = default_start
-end_date   = datetime.now().date()
+start_date = st.sidebar.date_input(
+    "Start date",
+    value=default_start,
+    min_value=min_date,
+    max_value=datetime.now().date(),
+)
+end_date = datetime.now().date()
 
 granularity = "Weekly"
 
