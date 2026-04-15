@@ -114,16 +114,46 @@ st.sidebar.markdown("---")
 
 min_date = export_df["Transaction Date"].min().date()
 max_date = export_df["Transaction Date"].max().date()
+today     = datetime.now().date()
 
-default_start = max(min_date, datetime.now().date().replace(month=1, day=1))
+# ── Quick-range presets ───────────────────────────────────────────────────────
+PRESETS = {
+    "Custom":    None,
+    "Past 4 weeks":  4,
+    "Past 6 weeks":  6,
+    "Past 8 weeks":  8,
+    "Past 12 weeks": 12,
+}
+preset = st.sidebar.selectbox("Date range", list(PRESETS.keys()), index=0)
 
-start_date = st.sidebar.date_input(
-    "Start date",
-    value=default_start,
-    min_value=min_date,
-    max_value=datetime.now().date(),
-)
-end_date = datetime.now().date()
+if PRESETS[preset] is not None:
+    # Preset selected — compute start/end automatically, hide manual pickers
+    end_date   = today
+    start_date = today - timedelta(weeks=PRESETS[preset])
+    start_date = max(start_date, min_date)
+    st.sidebar.caption(f"{preset}: {start_date} → {end_date}")
+else:
+    # Custom — show both date pickers
+    default_start = max(min_date, today.replace(month=1, day=1))
+
+    start_date = st.sidebar.date_input(
+        "Start date",
+        value=default_start,
+        min_value=min_date,
+        max_value=today,
+    )
+
+    end_mode = st.sidebar.radio("End date", ["Today", "Pick a date"], horizontal=True)
+    if end_mode == "Today":
+        end_date = today
+        st.sidebar.caption(f"End date: {today} (today)")
+    else:
+        end_date = st.sidebar.date_input(
+            "End date",
+            value=today,
+            min_value=start_date,
+            max_value=today,
+        )
 
 granularity = "Weekly"
 
