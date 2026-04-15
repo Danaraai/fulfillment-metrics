@@ -338,6 +338,185 @@ weekly["Total Cost/Order"]          = (
 )
 weekly["Week Label"] = period_label(weekly["Week"])
 
+def _render_negotiation_chart():
+    """Render the Pre vs Post Negotiation stacked bar chart.
+    Uses the global `granularity` variable to group by week or month."""
+    st.markdown('<div class="section-header">Shipping Cost: Pre vs Post Negotiation</div>',
+                unsafe_allow_html=True)
+
+    if comparison_df.empty:
+        err = _comparison_load_error.get("msg", "")
+        if err:
+            st.error(f"Could not load comparison data: {err}")
+        else:
+            st.info("Negotiation comparison data not available. Run `python3 enrich_shipments.py` to generate it.")
+        return
+
+    # Apply same date filter as the rest of the dashboard
+    cmp_mask = (
+        (comparison_df["Transaction Date"].dt.date >= start_date) &
+        (comparison_df["Transaction Date"].dt.date <= end_date) &
+        (comparison_df["Rate_Lookup_Status"] == "OK")
+    )
+    cmp = comparison_df[cmp_mask].copy()
+
+    if cmp.empty:
+        st.info("No comparison data available for the selected date range.")
+        return
+
+    # Use same period grouping as the rest of the dashboard (weekly or monthly)
+    cmp["Period"] = period_start(cmp["Transaction Date"])
+
+    period_cmp = (
+        cmp.groupby("Period")
+           .agg(
+               Shipments        =("OrderID",              "count"),
+               Pre_Neg_Total    =("Pre_Neg_Total_Rate",   "sum"),
+               Post_Neg_Total   =("Current_Total",        "sum"),
+               Total_Savings    =("Savings_Per_Shipment", "sum"),
+           )
+           .reset_index()
+           .sort_values("Period")
+    )
+    period_cmp["Week Label"] = period_label(period_cmp["Period"])
+
+    # ── KPI summary row ──────────────────────────────────────────────────
+    total_pre  = cmp["Pre_Neg_Total_Rate"].sum()
+    total_post = cmp["Current_Total"].sum()
+    total_sav  = cmp["Savings_Per_Shipment"].sum()
+    pct_saved  = (total_sav / total_pre * 100) if total_pre else 0
+    avg_sav_per_ship = total_sav / len(cmp) if len(cmp) else 0
+
+    n1, n2, n3, n4 = st.columns(4)
+    n1.metric("Pre-Neg Total Cost",    f"${total_pre:,.0f}")
+    n2.metric("Post-Neg Total Cost",   f"${total_post:,.0f}")
+    n3.metric("Total Savings",         f"${total_sav:,.0f}",
+              delta=f"{pct_saved:.1f}% vs pre-neg",
+              delta_color="normal")
+    n4.metric("Avg Savings / Shipment", f"${avg_sav_per_ship:.2f}")
+
+    st.markdown("")
+
+    post_neg_col = period_cmp["Post_Neg_Total"].reset_index(drop=True)
+    pre_neg_col  = period_cmp["Pre_Neg_Total"].reset_index(drop=True)
+    savings_raw  = period_cmp["Total_Savings"].reset_index(drop=True)
+
+    base_seg    = post_neg_col.clip(upper=pre_neg_col).round(2)   # ① blue
+    savings_seg = savings_raw.clip(lower=0).round(2)              # ② green
+    premium_seg = (-savings_raw).clip(lower=0).round(2)           # ③ light red
+
+    fig_neg = go.Figure()
+
+    fig_neg.add_bar(
+        x=period_cmp["Week Label"],
+        y=base_seg,
+        name="Post-Neg Cost",
+        marker_color="#4361ee",
+        text=post_neg_col.map("${:,.0f}".format),
+        textposition="inside",
+        insidetextanchor="middle",
+        textfont=dict(size=11, color="#ffffff"),
+    )
+
+    fig_neg.add_bar(
+        x=period_cmp["Week Label"],
+        y=savings_seg,
+        name="Savings vs Pre-Neg",
+        marker_color="#43a878",
+        text=savings_seg.map(lambda v: f"+${v:,.0f}" if v > 0 else ""),
+        textposition="inside",
+        insidetextanchor="middle",
+        textfont=dict(size=11, color="#ffffff"),
+    )
+
+    fig_neg.add_bar(
+        x=period_cmp["Week Label"],
+        y=premium_seg,
+        name="Increase vs Pre-Neg",
+        marker_color="rgba(247, 37, 133, 0.28)",
+        marker_line=dict(width=0),
+        text=premium_seg.map(lambda v: f"−${v:,.0f}" if v > 0 else ""),
+        textposition="inside",
+        insidetextanchor="middle",
+        textfont=dict(size=11, color="#c9184a"),
+    )
+
+    bar_tops = post_neg_col.clip(lower=pre_neg_col)
+    max_bar  = float(bar_tops.max())
+
+    pre_annotations = [
+        dict(
+            x=row["Week Label"],
+            y=float(bar_tops.iloc[i]),
+            text=f"Pre: ${row['Pre_Neg_Total']:,.0f}",
+            showarrow=False,
+            yshift=14,
+            font=dict(size=9, color="#6b7a99", family="monospace"),
+            xanchor="center",
+            yanchor="bottom",
+        )
+        for i, (_, row) in enumerate(period_cmp.iterrows())
+    ]
+
+    xaxis_title_neg = "Month" if granularity == "Monthly" else "Week (Monday)"
+    fig_neg.update_layout(
+        **PLOTLY_THEME,
+        barmode="stack",
+        xaxis_title=xaxis_title_neg,
+        yaxis_title="Total Shipping Cost ($)",
+        yaxis_tickprefix="$",
+        yaxis_tickformat=",",
+        yaxis_range=[0, max_bar * 1.14],
+        annotations=pre_annotations,
+        legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
+        margin=dict(t=40, b=80, l=10, r=10),
+        height=500,
+    )
+    fig_neg.update_xaxes(type="category")
+    st.plotly_chart(fig_neg, use_container_width=True)
+
+    with st.expander("📊 Savings breakdown by carrier"):
+        if "Carrier" in cmp.columns:
+            carrier_cmp = (
+                cmp.groupby("Carrier")
+                   .agg(
+                       Shipments    =("OrderID",              "count"),
+                       Pre_Neg      =("Pre_Neg_Total_Rate",   "sum"),
+                       Post_Neg     =("Current_Total",        "sum"),
+                       Savings      =("Savings_Per_Shipment", "sum"),
+                   )
+                   .reset_index()
+                   .sort_values("Savings", ascending=False)
+            )
+            carrier_cmp["Avg Savings / Shipment"] = (
+                carrier_cmp["Savings"] / carrier_cmp["Shipments"]
+            ).round(2)
+            carrier_cmp["% Saved"] = (
+                carrier_cmp["Savings"] / carrier_cmp["Pre_Neg"] * 100
+            ).round(1)
+
+            st.dataframe(
+                carrier_cmp.style.format({
+                    "Pre_Neg":               "${:,.2f}",
+                    "Post_Neg":              "${:,.2f}",
+                    "Savings":               "${:,.2f}",
+                    "Avg Savings / Shipment":"${:.2f}",
+                    "% Saved":               "{:.1f}%",
+                    "Shipments":             "{:,}",
+                }).map(
+                    lambda v: "color: #43a878; font-weight:600" if isinstance(v, (int, float)) and v > 0
+                              else ("color: #f72585; font-weight:600" if isinstance(v, (int, float)) and v < 0 else ""),
+                    subset=["Savings", "Avg Savings / Shipment"]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "🟢 Green = savings achieved vs pre-negotiation rates  ·  "
+                "🔴 Red = carrier rate is higher post-negotiation (rate table may not apply to this carrier)"
+            )
+
+
 _tab_main, _tab_monthly = st.tabs(["📦 Weekly Dashboard", "📅 Monthly Dashboard"])
 _tab_main.__enter__()
 
@@ -681,7 +860,11 @@ if pd.notna(avg_oplh) and avg_oplh > 0 and pd.notna(avg_labor_cost):
 else:
     st.caption(f"📊 {len(show):,} days  ·  Labor hours data not available for this range")
 
+granularity = "Weekly"
+_render_negotiation_chart()
+
 _tab_main.__exit__(None, None, None)
+
 
 # ── Monthly Performance Table ─────────────────────────────────────────────────
 
@@ -789,203 +972,7 @@ st.dataframe(
     height=min(600, (len(monthly_display) + 1) * 38 + 40),
 )
 
+granularity = "Monthly"
+_render_negotiation_chart()
+
 _tab_monthly.__exit__(None, None, None)
-
-# ── Chart 6: Pre vs Post Negotiation Shipping Cost ────────────────────────────
-
-st.markdown('<div class="section-header">Shipping Cost: Pre vs Post Negotiation</div>',
-            unsafe_allow_html=True)
-
-if comparison_df.empty:
-    err = _comparison_load_error.get("msg", "")
-    if err:
-        st.error(f"Could not load comparison data: {err}")
-    else:
-        st.info("Negotiation comparison data not available. Run `python3 enrich_shipments.py` to generate it.")
-else:
-    # Apply same date filter as the rest of the dashboard
-    cmp_mask = (
-        (comparison_df["Transaction Date"].dt.date >= start_date) &
-        (comparison_df["Transaction Date"].dt.date <= end_date) &
-        (comparison_df["Rate_Lookup_Status"] == "OK")
-    )
-    cmp = comparison_df[cmp_mask].copy()
-
-    if cmp.empty:
-        st.info("No comparison data available for the selected date range.")
-    else:
-        # Use same period grouping as the rest of the dashboard (weekly or monthly)
-        cmp["Period"] = period_start(cmp["Transaction Date"])
-
-        weekly_cmp = (
-            cmp.groupby("Period")
-               .agg(
-                   Shipments        =("OrderID",              "count"),
-                   Pre_Neg_Total    =("Pre_Neg_Total_Rate",   "sum"),
-                   Post_Neg_Total   =("Current_Total",        "sum"),
-                   Total_Savings    =("Savings_Per_Shipment", "sum"),
-               )
-               .reset_index()
-               .sort_values("Period")
-        )
-        weekly_cmp["Week Label"] = period_label(weekly_cmp["Period"])
-
-        # ── KPI summary row ──────────────────────────────────────────────────
-        total_pre  = cmp["Pre_Neg_Total_Rate"].sum()
-        total_post = cmp["Current_Total"].sum()
-        total_sav  = cmp["Savings_Per_Shipment"].sum()
-        pct_saved  = (total_sav / total_pre * 100) if total_pre else 0
-        avg_sav_per_ship = total_sav / len(cmp) if len(cmp) else 0
-
-        n1, n2, n3, n4 = st.columns(4)
-        n1.metric("Pre-Neg Total Cost",    f"${total_pre:,.0f}")
-        n2.metric("Post-Neg Total Cost",   f"${total_post:,.0f}")
-        n3.metric("Total Savings",         f"${total_sav:,.0f}",
-                  delta=f"{pct_saved:.1f}% vs pre-neg",
-                  delta_color="normal")
-        n4.metric("Avg Savings / Shipment", f"${avg_sav_per_ship:.2f}")
-
-        st.markdown("")
-
-        # ── Stacked bar (3 segments) ──────────────────────────────────────────
-        #
-        #  SAVINGS weeks  (post_neg ≤ pre_neg):
-        #    ① blue       = post_neg            (actual cost paid)
-        #    ② green      = pre_neg − post_neg  (money saved vs old rates)
-        #    total bar    = pre_neg
-        #
-        #  OVERPAY weeks  (post_neg > pre_neg):
-        #    ① blue       = pre_neg             (what pre-neg would have cost)
-        #    ③ light-red  = post_neg − pre_neg  (extra we pay vs old rates)
-        #    total bar    = post_neg
-        #
-        #  "Pre:" scatter label is pinned at y = pre_neg for every week.
-        #    → savings weeks: floats just above the bar top  (pre_neg = bar top)
-        #    → overpay weeks: sits at the blue/red boundary  (marks the threshold)
-
-        post_neg_col = weekly_cmp["Post_Neg_Total"].reset_index(drop=True)
-        pre_neg_col  = weekly_cmp["Pre_Neg_Total"].reset_index(drop=True)
-        savings_raw  = weekly_cmp["Total_Savings"].reset_index(drop=True)
-
-        base_seg    = post_neg_col.clip(upper=pre_neg_col).round(2)   # ① blue
-        savings_seg = savings_raw.clip(lower=0).round(2)              # ② green
-        premium_seg = (-savings_raw).clip(lower=0).round(2)           # ③ light red
-
-        fig_neg = go.Figure()
-
-        # ① Blue — base cost
-        fig_neg.add_bar(
-            x=weekly_cmp["Week Label"],
-            y=base_seg,
-            name="Post-Neg Cost",
-            marker_color="#4361ee",
-            text=post_neg_col.map("${:,.0f}".format),
-            textposition="inside",
-            insidetextanchor="middle",
-            textfont=dict(size=11, color="#ffffff"),
-        )
-
-        # ② Green — savings (invisible for overpay weeks)
-        fig_neg.add_bar(
-            x=weekly_cmp["Week Label"],
-            y=savings_seg,
-            name="Savings vs Pre-Neg",
-            marker_color="#43a878",
-            text=savings_seg.map(lambda v: f"+${v:,.0f}" if v > 0 else ""),
-            textposition="inside",
-            insidetextanchor="middle",
-            textfont=dict(size=11, color="#ffffff"),
-        )
-
-        # ③ Light red — premium / increase over pre-neg (invisible for savings weeks)
-        fig_neg.add_bar(
-            x=weekly_cmp["Week Label"],
-            y=premium_seg,
-            name="Increase vs Pre-Neg",
-            marker_color="rgba(247, 37, 133, 0.28)",
-            marker_line=dict(width=0),
-            text=premium_seg.map(lambda v: f"−${v:,.0f}" if v > 0 else ""),
-            textposition="inside",
-            insidetextanchor="middle",
-            textfont=dict(size=11, color="#c9184a"),
-        )
-
-        # "Pre: $X,XXX" annotations — placed via pixel yshift so they always sit
-        # cleanly above the bar top without overlapping bar text.
-        # y = top of each bar (max of pre_neg and post_neg); yshift pushes the
-        # text 14 px above that in screen space regardless of bar height.
-        bar_tops = post_neg_col.clip(lower=pre_neg_col)   # max(post_neg, pre_neg)
-        max_bar  = float(bar_tops.max())
-
-        pre_annotations = [
-            dict(
-                x=row["Week Label"],
-                y=float(bar_tops.iloc[i]),
-                text=f"Pre: ${row['Pre_Neg_Total']:,.0f}",
-                showarrow=False,
-                yshift=14,
-                font=dict(size=9, color="#6b7a99", family="monospace"),
-                xanchor="center",
-                yanchor="bottom",
-            )
-            for i, (_, row) in enumerate(weekly_cmp.iterrows())
-        ]
-
-        xaxis_title_neg = "Month" if granularity == "Monthly" else "Week (Monday)"
-        fig_neg.update_layout(
-            **PLOTLY_THEME,
-            barmode="stack",
-            xaxis_title=xaxis_title_neg,
-            yaxis_title="Total Shipping Cost ($)",
-            yaxis_tickprefix="$",
-            yaxis_tickformat=",",
-            yaxis_range=[0, max_bar * 1.14],   # headroom so labels aren't clipped
-            annotations=pre_annotations,
-            legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
-            margin=dict(t=40, b=80, l=10, r=10),
-            height=500,
-        )
-        fig_neg.update_xaxes(type="category")   # prevent "11-03" being parsed as year 2011
-        st.plotly_chart(fig_neg, use_container_width=True)
-
-        # ── Carrier breakdown toggle ─────────────────────────────────────────
-        with st.expander("📊 Savings breakdown by carrier"):
-            if "Carrier" in cmp.columns:
-                carrier_cmp = (
-                    cmp.groupby("Carrier")
-                       .agg(
-                           Shipments    =("OrderID",              "count"),
-                           Pre_Neg      =("Pre_Neg_Total_Rate",   "sum"),
-                           Post_Neg     =("Current_Total",        "sum"),
-                           Savings      =("Savings_Per_Shipment", "sum"),
-                       )
-                       .reset_index()
-                       .sort_values("Savings", ascending=False)
-                )
-                carrier_cmp["Avg Savings / Shipment"] = (
-                    carrier_cmp["Savings"] / carrier_cmp["Shipments"]
-                ).round(2)
-                carrier_cmp["% Saved"] = (
-                    carrier_cmp["Savings"] / carrier_cmp["Pre_Neg"] * 100
-                ).round(1)
-
-                st.dataframe(
-                    carrier_cmp.style.format({
-                        "Pre_Neg":               "${:,.2f}",
-                        "Post_Neg":              "${:,.2f}",
-                        "Savings":               "${:,.2f}",
-                        "Avg Savings / Shipment":"${:.2f}",
-                        "% Saved":               "{:.1f}%",
-                        "Shipments":             "{:,}",
-                    }).map(
-                        lambda v: "color: #43a878; font-weight:600" if isinstance(v, (int, float)) and v > 0
-                                  else ("color: #f72585; font-weight:600" if isinstance(v, (int, float)) and v < 0 else ""),
-                        subset=["Savings", "Avg Savings / Shipment"]
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-                st.caption(
-                    "🟢 Green = savings achieved vs pre-negotiation rates  ·  "
-                    "🔴 Red = carrier rate is higher post-negotiation (rate table may not apply to this carrier)"
-                )
