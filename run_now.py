@@ -90,14 +90,17 @@ def open_chrome(url: str):
     subprocess.run(["osascript", "-e", script])
 
 
-def automate_chrome_export(report_url: str, export_date: date) -> bool:
+def automate_chrome_export(report_url: str, export_date: date, end_date: date = None) -> bool:
     """
     Fully automated Chrome export via AppleScript + JS injection.
-    Steps: open report → set date slicer to export_date (start AND end) → click ··· → Export.
+    Steps: open report → set date slicer → click ··· → Export.
+    If end_date is provided, sets a range (start=export_date, end=end_date).
     Returns True if export was triggered successfully.
     """
-    date_str = export_date.strftime("%-m/%-d/%Y")   # e.g. "3/22/2026"
-    day_num  = str(export_date.day)                  # e.g. "22"
+    start_str = export_date.strftime("%-m/%-d/%Y")
+    end_str   = (end_date or export_date).strftime("%-m/%-d/%Y")
+    date_str  = start_str   # used for display / cap logic below
+    day_num   = str(export_date.day)
 
     # 1 — Open Chrome
     print("  Opening Chrome and loading report...")
@@ -118,9 +121,8 @@ def automate_chrome_export(report_url: str, export_date: date) -> bool:
 
     time.sleep(2)
 
-    # 3 — Set BOTH start and end date inputs to export_date (single day)
-    # Uses Angular-compatible native value setter (execCommand doesn't trigger ng-model)
-    print(f"  Setting date slicer to {date_str} (start and end)...")
+    # 3 — Set date slicer (start and end may differ for multi-day range exports)
+    print(f"  Setting date slicer {start_str} → {end_str}...")
     set_result = _run_js(f"""
 (function() {{
     var inputs = Array.from(document.querySelectorAll('input.date-slicer-datepicker'));
@@ -133,20 +135,22 @@ def automate_chrome_export(report_url: str, export_date: date) -> bool:
     var startInput = inputs[0];
     var endInput   = inputs[inputs.length - 1];
 
-    // Parse max allowed date from aria-label (e.g. "...to 3/20/2026")
+    // Parse max allowed date from aria-label (e.g. "...to 4/10/2026")
     var aria  = startInput.getAttribute('aria-label') || '';
     var match = aria.match(/to (\\d+\\/\\d+\\/\\d+)/);
     var maxDate = match ? match[1] : null;
 
-    // Use requested date, but cap at max available date in the dataset
-    var target = '{date_str}';
-    if (maxDate) {{
+    function capDate(target) {{
+        if (!maxDate) return target;
         var tParts = target.split('/');
         var mParts = maxDate.split('/');
         var tTime  = new Date(tParts[2], tParts[0]-1, tParts[1]).getTime();
         var mTime  = new Date(mParts[2], mParts[0]-1, mParts[1]).getTime();
-        if (tTime > mTime) {{ target = maxDate; }}
+        return tTime > mTime ? maxDate : target;
     }}
+
+    var targetStart = capDate('{start_str}');
+    var targetEnd   = capDate('{end_str}');
 
     var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
 
@@ -161,9 +165,9 @@ def automate_chrome_export(report_url: str, export_date: date) -> bool:
     }}
 
     // Set end FIRST so start constraint (must be <= end) is satisfied
-    setAngularInput(endInput, target);
-    setAngularInput(startInput, target);
-    return 'target=' + target + ' | start=' + startInput.value + ' end=' + endInput.value;
+    setAngularInput(endInput,   targetEnd);
+    setAngularInput(startInput, targetStart);
+    return 'start=' + startInput.value + ' end=' + endInput.value;
 }})()
 """)
     print(f"  Date JS: {set_result}")
@@ -311,7 +315,7 @@ def wait_for_csv(timeout_minutes: int = 10):
 
 def archive_csv(src: Path, export_date: date) -> Path:
     ARCHIVE_DIR.mkdir(exist_ok=True)
-    dest = ARCHIVE_DIR / f"jack_archer_{fmt_s(export_date)}.csv"
+    dest = ARCHIVE_DIR / f"jack_archer_{fmt_s(export_date)}{src.suffix}"
     shutil.copy2(src, dest)
     return dest
 
@@ -512,7 +516,8 @@ def main():
     parser.add_argument("--upload-only", action="store_true", help="Skip Chrome, use latest ~/Downloads/data.csv")
     parser.add_argument("--schedule",    action="store_true", help="Install daily 4pm launchd job")
     parser.add_argument("--unschedule",  action="store_true", help="Remove the scheduled job")
-    parser.add_argument("--date",        type=str, default=None, help="Export a specific date (YYYY-MM-DD), default=yesterday")
+    parser.add_argument("--date",        type=str, default=None, help="Start date (YYYY-MM-DD), default=yesterday")
+    parser.add_argument("--end-date",    type=str, default=None, help="End date for range export (YYYY-MM-DD), default=same as --date")
     args = parser.parse_args()
 
     if args.unschedule:
@@ -527,14 +532,16 @@ def main():
 
     if args.date:
         export_date = datetime.strptime(args.date, "%Y-%m-%d").date()
-        label = f"(custom: {args.date})"
+        end_date    = datetime.strptime(args.end_date, "%Y-%m-%d").date() if args.end_date else export_date
+        label = f"(custom: {args.date}" + (f" → {args.end_date}" if args.end_date else "") + ")"
     else:
         export_date = get_yesterday()
+        end_date    = export_date
         label = "(yesterday)"
 
     print("=" * 62)
     print("  Jack Archer Daily Export")
-    print(f"  Exporting : {fmt(export_date)}  {label}")
+    print(f"  Exporting : {fmt(export_date)}" + (f" → {fmt(end_date)}" if end_date != export_date else "") + f"  {label}")
     print(f"  Today     : {fmt(date.today())}")
     print("=" * 62)
 
@@ -550,8 +557,8 @@ def main():
         csv_path = candidates[0]
         print(f"\nUsing: {csv_path.name}  ({csv_path.stat().st_size // 1024} KB)")
     else:
-        print(f"\n[1/3] Automating Chrome export for {fmt_s(export_date)}...")
-        automate_chrome_export(config["powerbi"]["report_url"], export_date)
+        print(f"\n[1/3] Automating Chrome export for {fmt_s(export_date)}" + (f" → {fmt_s(end_date)}" if end_date != export_date else "") + "...")
+        automate_chrome_export(config["powerbi"]["report_url"], export_date, end_date)
         csv_path = wait_for_csv(timeout_minutes=10)
         if csv_path is None:
             print("\nExport not detected. Try running with --upload-only after exporting manually.")
