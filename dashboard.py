@@ -124,7 +124,7 @@ PRESETS = {
     "Past 8 weeks":  8,
     "Past 12 weeks": 12,
 }
-preset = st.sidebar.selectbox("Date range", list(PRESETS.keys()), index=0)
+preset = st.sidebar.selectbox("Date range", list(PRESETS.keys()), index=3)
 
 if PRESETS[preset] is not None:
     # Preset selected — compute start/end automatically, hide manual pickers
