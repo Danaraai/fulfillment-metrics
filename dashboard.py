@@ -119,6 +119,7 @@ today     = datetime.now().date()
 # ── Quick-range presets ───────────────────────────────────────────────────────
 PRESETS = {
     "Custom":    None,
+    "Past 1 week":  1,
     "Past 4 weeks":  4,
     "Past 6 weeks":  6,
     "Past 8 weeks":  8,
