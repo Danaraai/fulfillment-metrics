@@ -1,0 +1,14 @@
+.git
+.gitignore
+README.md
+*.pyc
+__pycache__
+.pytest_cache
+.streamlit/cache
+session/
+downloads/
+logs/
+*.pickle
+google_*.json
+.env
+.env.local
