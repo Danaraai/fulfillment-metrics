@@ -26,11 +26,21 @@ SCOPES              = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
 def _get_creds():
     """Return Google API credentials (service account on cloud, OAuth locally)."""
+    from google.oauth2.service_account import Credentials
+
+    # Cloud Run: check environment variable first
+    env_creds = os.getenv("GCP_SERVICE_ACCOUNT")
+    if env_creds:
+        try:
+            info = json.loads(env_creds)
+            return Credentials.from_service_account_info(info, scopes=SCOPES)
+        except Exception:
+            pass  # Fall through if env var parsing fails
+
     # Streamlit Cloud: service account stored in secrets
     # Wrap in try/except — accessing st.secrets raises if secrets.toml is missing locally
     try:
         if "gcp_service_account" in st.secrets:
-            from google.oauth2.service_account import Credentials
             info = json.loads(st.secrets["gcp_service_account"])
             return Credentials.from_service_account_info(info, scopes=SCOPES)
     except Exception:
@@ -50,7 +60,8 @@ def _get_creds():
 
     raise RuntimeError(
         "No Google credentials found.\n"
-        "  • On Streamlit Cloud: add 'gcp_service_account' to secrets.\n"
+        "  • Cloud Run: set GCP_SERVICE_ACCOUNT environment variable.\n"
+        "  • Streamlit Cloud: add 'gcp_service_account' to secrets.\n"
         "  • Locally: run the OAuth flow once to create google_token.pickle."
     )
 
